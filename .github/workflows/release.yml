@@ -1,0 +1,76 @@
+name: Release NAS Games
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Build PS5 payload
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version=$(awk -F '"' '/^#define NG_VERSION / {print $2}' apps/nasgames/src/common.h)
+          test "$RELEASE_TAG" = "v$version"
+          sudo apt-get update -o Acquire::Retries=3
+          make bootstrap
+          make nasgames
+          make -C apps/nasgames host
+          node --check apps/nasgames/ui/app.js
+
+      - name: Package release files
+        run: |
+          version=$(awk -F '"' '/^#define NG_VERSION / {print $2}' apps/nasgames/src/common.h)
+          release_dir="$PWD/dist/nasgames-$version"
+          source_dir="$RUNNER_TEMP/nasgames-$version"
+          mkdir -p "$release_dir" "$source_dir/.deps" "$source_dir/dependencies"
+          git archive "$GITHUB_SHA" | tar -xf - -C "$source_dir"
+          cp -R .deps/libsmb2-6.2 "$source_dir/.deps/"
+          sdk_source="$RUNNER_TEMP/ps5-payload-sdk-v0.50.tar.gz"
+          curl -fsSL --retry 3 -o "$sdk_source" https://codeload.github.com/ps5-payload-dev/sdk/tar.gz/refs/tags/v0.50
+          printf '%s  %s\n' 5bd3b4512f3f0de0a1355970862bf828d26f69d7abe034b322378bbad4776cc2 "$sdk_source" | sha256sum -c
+          cp "$sdk_source" "$source_dir/dependencies/"
+          install -m 0755 apps/nasgames/nasgames.elf "$release_dir/nasgames.elf"
+          tar -C "$RUNNER_TEMP" -czf "$release_dir/nasgames-$version-source.tar.gz" "nasgames-$version"
+          cd "$release_dir"
+          sha256sum nasgames.elf "nasgames-$version-source.tar.gz" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version=${RELEASE_TAG#v}
+          release_dir="dist/nasgames-$version"
+          if published=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' 2>/dev/null); then
+            test "$published" = true
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "NAS Games $version" --notes-file docs/release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$release_dir/nasgames.elf" "$release_dir/SHA256SUMS" \
+            "$release_dir/nasgames-$version-source.tar.gz"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

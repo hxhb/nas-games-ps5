@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#070a12">
+  <title>NAS Games</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div id="shell" class="shell">
+    <header class="topbar">
+      <div class="brand" aria-label="NAS Games">
+        <span class="brand-mark"><img src="/icon.svg" alt=""></span>
+        <span class="brand-copy">
+          <strong>NAS GAMES</strong>
+          <small>REMOTE LIBRARY</small>
+        </span>
+      </div>
+
+      <nav id="filters" class="filters" aria-label="游戏筛选">
+        <button class="filter is-active" data-filter="all">全部</button>
+        <button class="filter" data-filter="installed">已安装</button>
+        <button class="filter" data-filter="notInstalled">未安装</button>
+        <span class="filter-divider" aria-hidden="true"></span>
+        <div id="formatFilter" class="filter-format">
+          <button id="formatFilterButton" class="filter filter-format-button"
+                  type="button" aria-haspopup="true" aria-expanded="false"
+                  aria-controls="formatMenu">
+            <span>格式</span>
+            <span id="formatFilterValue" class="filter-format-value">全部</span>
+            <svg class="filter-chevron icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m7 10 5 5 5-5"></path>
+            </svg>
+          </button>
+          <div id="formatMenu" class="format-menu" role="menu" hidden>
+            <button type="button" class="format-option is-active" data-format="all"
+                    role="menuitemradio" aria-checked="true">
+              <span>所有格式</span><b data-format-count="all">0</b>
+            </button>
+            <button type="button" class="format-option" data-format="folder"
+                    role="menuitemradio" aria-checked="false">
+              <span>文件夹</span><b data-format-count="folder">0</b>
+            </button>
+            <button type="button" class="format-option" data-format="pkg"
+                    role="menuitemradio" aria-checked="false">
+              <span>PKG</span><b data-format-count="pkg">0</b>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <div class="top-actions">
+        <label class="searchbox" aria-label="搜索游戏">
+          <svg class="search-icon icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5"></circle>
+            <path d="m16 16 4.2 4.2"></path>
+          </svg>
+          <input id="search" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="搜索标题 / Title ID">
+        </label>
+        <button id="scanButton" class="icon-button" title="重新扫描" aria-label="重新扫描">
+          <svg class="icon-refresh icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.2 6.5"></path>
+            <path d="M20 4v7h-7"></path>
+          </svg>
+        </button>
+        <div id="transferShell" class="transfer-shell">
+          <button id="transferButton" class="icon-button transfer-button"
+                  title="传输任务" aria-label="传输任务" aria-expanded="false">
+            <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v10M8 9l4 4 4-4"></path>
+              <path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"></path>
+            </svg>
+            <span id="transferBadge" class="transfer-badge" hidden></span>
+          </button>
+          <section id="transferPanel" class="transfer-panel" hidden aria-live="polite">
+            <header class="transfer-head">
+              <div>
+                <p>TRANSFER QUEUE</p>
+                <h3 id="transferTitle">传输任务</h3>
+              </div>
+              <button id="transferClose" class="transfer-close" aria-label="关闭传输面板">×</button>
+            </header>
+            <div class="transfer-current">
+              <div class="transfer-current-head">
+                <span id="transferStateDot" class="transfer-state-dot"></span>
+                <strong id="transferStage">空闲</strong>
+                <span id="transferPercent" class="transfer-percent"></span>
+              </div>
+              <div class="progress-track transfer-progress">
+                <div id="jobProgress" class="progress-fill"></div>
+              </div>
+              <p id="transferMessage" class="transfer-message">当前没有传输任务</p>
+              <div class="transfer-stats">
+                <div><small>总大小</small><strong id="transferSize">—</strong></div>
+                <div><small>当前速度</small><strong id="transferSpeed">—</strong></div>
+                <div><small>已完成</small><strong id="transferDone">—</strong></div>
+              </div>
+              <button id="cancelJobButton" class="cancel-job-button" type="button" hidden>
+                停止当前安装
+              </button>
+            </div>
+            <div class="transfer-queue-head">
+              <span>等待队列</span>
+              <span id="transferQueueCount">0</span>
+            </div>
+            <div id="transferQueueList" class="transfer-queue-list"></div>
+            <div class="transfer-queue-head transfer-history-head">
+              <span>最近任务 <b id="transferHistoryCount">0</b></span>
+              <button id="clearHistoryButton" type="button" hidden>清除记录</button>
+            </div>
+            <div id="transferHistoryList" class="transfer-history-list"></div>
+          </section>
+        </div>
+        <button id="settingsButton" class="icon-button icon-button-accent"
+                title="设置" aria-label="设置">
+          <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="library-head">
+        <div class="library-heading">
+          <h1>游戏库</h1>
+          <div id="libraryStats" class="library-stats" aria-label="游戏库概览"></div>
+        </div>
+        <div id="libraryMeta" class="library-meta">
+          <span id="gameCount">0 个游戏</span>
+          <span id="sourceSummary" class="meta-divider">未配置连接</span>
+        </div>
+      </section>
+
+      <section id="noticeStrip" class="notice-strip" hidden></section>
+
+      <section id="library" class="library" aria-live="polite">
+        <div class="loading-card">
+          <span class="spinner"></span>
+          <p>正在载入游戏库...</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <div id="scanStatus" class="scan-status">
+        <span class="status-dot"></span>
+        <span>等待扫描</span>
+      </div>
+      <div id="sourcePills" class="source-pills"></div>
+      <div class="key-hints" aria-label="PS5 手柄操作提示">
+        <span class="key-hint">
+          <span class="ps-key ps-dpad" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 3v18M3 12h18"></path>
+              <path d="m9 6 3-3 3 3M18 9l3 3-3 3M15 18l-3 3-3-3M6 15l-3-3 3-3"></path>
+            </svg>
+          </span>
+          <span>导航</span>
+        </span>
+        <span class="key-hint">
+          <span class="ps-key ps-cross" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+          </span>
+          <span>选择</span>
+        </span>
+        <span class="key-hint">
+          <span class="ps-key ps-circle" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.6"></circle></svg>
+          </span>
+          <span>返回</span>
+        </span>
+      </div>
+    </footer>
+  </div>
+
+  <section id="detailPanel" class="detail-panel" hidden aria-modal="true" role="dialog">
+    <div id="detailBackdrop" class="detail-backdrop"></div>
+    <article class="detail-card">
+      <button id="detailClose" class="close-button" aria-label="关闭详情">×</button>
+      <div id="detailArt" class="detail-art"></div>
+      <div class="detail-shade"></div>
+      <div class="detail-content">
+        <div class="detail-main">
+          <div id="detailCover" class="detail-cover"></div>
+          <div class="detail-copy">
+            <div id="detailFormat" class="detail-format-line"></div>
+            <h2 id="detailTitle">游戏</h2>
+            <p id="detailSubtitle" class="detail-subtitle"></p>
+            <p id="detailPath" class="detail-path"></p>
+          </div>
+        </div>
+        <aside class="detail-side">
+          <div class="detail-action-panel">
+            <div class="detail-panel-head">
+              <div>
+                <p>INSTALL &amp; CONTENT</p>
+                <h3 id="detailActionTitle">安装与内容</h3>
+              </div>
+              <span id="detailInstallStatus" class="detail-install-status">可安装</span>
+            </div>
+            <div id="detailInstalledState" class="detail-installed-state" hidden>
+              <span class="detail-installed-check">✓</span>
+              <span>
+                <strong>已安装到 PS5</strong>
+                <small id="detailInstalledMeta"></small>
+              </span>
+            </div>
+            <div id="detailStorage" class="detail-storage" hidden></div>
+            <div class="detail-actions">
+              <button id="installButton" class="primary-button">安装到 PS5</button>
+            </div>
+            <p id="detailHint" class="detail-hint"></p>
+            <section id="detailPackages" class="detail-packages" hidden>
+              <div class="detail-packages-head">
+                <strong>补丁与附加内容</strong>
+                <span id="detailPackagesCount"></span>
+              </div>
+              <div id="detailPackageList" class="package-list"></div>
+            </section>
+            <p id="detailTechNote" class="detail-tech-note" hidden></p>
+          </div>
+        </aside>
+      </div>
+    </article>
+  </section>
+
+  <section id="settingsPanel" class="modal-layer" hidden aria-modal="true" role="dialog">
+    <div class="sheet settings-sheet settings-center">
+      <header class="sheet-head">
+        <div>
+          <p class="eyebrow">CONTROL CENTER</p>
+          <h2>设置</h2>
+          <p class="settings-subtitle">管理游戏来源、扫描行为、安装服务和运行诊断。</p>
+        </div>
+        <button id="settingsClose" class="close-button dark" aria-label="关闭设置">×</button>
+      </header>
+      <div class="settings-center-layout">
+        <nav id="settingsNav" class="settings-nav" aria-label="设置分类">
+          <button class="settings-nav-item is-active" data-settings-tab="overview">
+            <span class="settings-nav-icon">◎</span>
+            <span><strong>概览</strong><small>状态与快捷入口</small></span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="global">
+            <span class="settings-nav-icon">⚙</span>
+            <span><strong>全局设置</strong><small>扫描、启动与安装</small></span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="connections">
+            <span class="settings-nav-icon">⇄</span>
+            <span><strong>远程连接</strong><small id="settingsNavConnections">0 个来源</small></span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="logs">
+            <span class="settings-nav-icon">≡</span>
+            <span><strong>运行日志</strong><small>诊断与错误详情</small></span>
+          </button>
+          <div class="settings-nav-foot">
+            <span class="settings-nav-dot"></span>
+            <span>NAS Games <b id="appVersion"></b></span>
+          </div>
+        </nav>
+
+        <div class="settings-pages">
+          <section class="settings-page is-active" data-settings-page="overview">
+            <div class="settings-page-head">
+              <div>
+                <p>OVERVIEW</p>
+                <h3>游戏库状态</h3>
+                <span>连接、游戏库与需要关注内容的实时概览。</span>
+              </div>
+            </div>
+            <section class="settings-overview" aria-label="连接概览">
+              <article class="overview-card">
+                <span class="overview-icon">◎</span>
+                <span class="overview-copy">
+                  <small>连接状态</small>
+                  <strong id="settingsConnectionCount">0</strong>
+                  <em id="settingsConnectionDetail">尚未配置连接</em>
+                </span>
+              </article>
+              <article class="overview-card">
+                <span class="overview-icon">▦</span>
+                <span class="overview-copy">
+                  <small>游戏库</small>
+                  <strong id="settingsGameCount">0</strong>
+                  <em id="settingsGameDetail">等待首次扫描</em>
+                </span>
+              </article>
+              <article class="overview-card attention">
+                <span class="overview-icon">!</span>
+                <span class="overview-copy">
+                  <small>需要关注</small>
+                  <strong id="settingsAttentionCount">0</strong>
+                  <em id="settingsAttentionDetail">没有待办项目</em>
+                </span>
+              </article>
+              <div id="settingsHealth" class="settings-health" hidden></div>
+            </section>
+            <div id="settingsAttentionList" class="settings-attention-list" hidden></div>
+            <div class="settings-quick-grid">
+              <button class="settings-quick-card" data-settings-jump="connections">
+                <span>⇄</span>
+                <strong>管理远程连接</strong>
+                <small>添加 SMB、FTP 或本地游戏来源</small>
+              </button>
+              <button class="settings-quick-card" data-settings-jump="global">
+                <span>⚙</span>
+                <strong>调整全局设置</strong>
+                <small>扫描频率、启动行为与安装保活</small>
+              </button>
+              <button class="settings-quick-card" data-settings-jump="logs">
+                <span>≡</span>
+                <strong>查看运行日志</strong>
+                <small>检查连接失败与安装错误</small>
+              </button>
+            </div>
+          </section>
+
+          <section class="settings-page" data-settings-page="global">
+            <div class="settings-page-head">
+              <div>
+                <p>GLOBAL</p>
+                <h3>全局设置</h3>
+                <span>这些设置对 NAS Games 的所有连接和安装任务生效。</span>
+              </div>
+            </div>
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <div>
+                  <h3>扫描与启动</h3>
+                  <p>控制扫描频率、深度以及 payload 启动后的默认行为。</p>
+                </div>
+              </div>
+              <div class="form-grid general-grid">
+                <label class="field">
+                  <span>HTTP 端口</span>
+                  <input id="settingPort" type="number" min="1024" max="65535" inputmode="numeric">
+                  <small>修改后需重新启动 payload。</small>
+                </label>
+                <label class="field">
+                  <span>扫描间隔（秒）</span>
+                  <input id="settingInterval" type="number" min="30" max="86400" inputmode="numeric">
+                </label>
+                <label class="field">
+                  <span>最大扫描深度</span>
+                  <input id="settingDepth" type="number" min="0" max="12" inputmode="numeric">
+                </label>
+                <label class="switch-field">
+                  <span>
+                    <strong>自动扫描</strong>
+                    <small>按间隔刷新远端游戏库</small>
+                  </span>
+                  <input id="settingAutoScan" type="checkbox" class="switch">
+                </label>
+                <label class="switch-field">
+                  <span>
+                    <strong>启动时打开浏览器</strong>
+                    <small>Payload 启动后自动展示海报墙</small>
+                  </span>
+                  <input id="settingOpenBrowser" type="checkbox" class="switch">
+                </label>
+                <label class="switch-field">
+                  <span>
+                    <strong>安装时保持唤醒</strong>
+                    <small>大文件安装期间避免 PS5 进入待机</small>
+                  </span>
+                  <input id="settingKeepAwake" type="checkbox" class="switch">
+                </label>
+              </div>
+            </section>
+          </section>
+
+          <section class="settings-page" data-settings-page="connections">
+            <div class="settings-page-head settings-page-head-actions">
+              <div>
+                <p>SOURCES</p>
+                <h3>远程连接</h3>
+                <span>支持多个 SMB、FTP 或本地目录，每个来源可扫描多个路径。</span>
+              </div>
+              <div class="connection-add-row">
+                <button id="addSmbButton" class="secondary-button compact">+ SMB</button>
+                <button id="addFtpButton" class="secondary-button compact">+ FTP</button>
+                <button id="addLocalButton" class="secondary-button compact">+ 本地</button>
+              </div>
+            </div>
+            <div class="connections-toolbar">
+              <span><i></i>连接配置会随设置一起保存，并在扫描时并行验证。</span>
+              <span id="connectionsToolbarCount">0 个来源</span>
+            </div>
+            <div id="connectionsList" class="connection-list"></div>
+          </section>
+
+          <section class="settings-page" data-settings-page="logs">
+            <div class="settings-page-head settings-page-head-actions">
+              <div>
+                <p>DIAGNOSTICS</p>
+                <h3>运行日志</h3>
+                <span>日志保存在数据目录的 <code>nasgames.log</code>。</span>
+              </div>
+              <button id="logRefresh" class="secondary-button compact">刷新日志</button>
+            </div>
+            <pre id="logText" class="settings-log">正在读取日志...</pre>
+          </section>
+        </div>
+      </div>
+      <footer class="sheet-foot">
+        <span id="settingsHint" class="sheet-hint">修改后保存，游戏库会自动刷新。</span>
+        <div class="button-row">
+          <button id="settingsCancel" class="secondary-button">取消</button>
+          <button id="settingsSave" class="primary-button">保存设置</button>
+        </div>
+      </footer>
+    </div>
+  </section>
+
+  <section id="editorPanel" class="modal-layer modal-layer-top" hidden aria-modal="true" role="dialog">
+    <div class="sheet editor-sheet">
+      <header class="sheet-head">
+        <div>
+          <p class="eyebrow">CONNECTION</p>
+          <h2 id="editorTitle">编辑连接</h2>
+        </div>
+        <button id="editorClose" class="close-button dark" aria-label="关闭">×</button>
+      </header>
+      <div class="sheet-body editor-body">
+        <div class="editor-flow" aria-hidden="true">
+          <span id="editorStepServer"><b>1</b>服务器</span>
+          <i></i>
+          <span id="editorStepShare"><b>2</b>共享</span>
+          <i></i>
+          <span id="editorStepRoots"><b>3</b>扫描目录</span>
+        </div>
+        <div id="editorProfile" class="editor-profile">
+          <span id="editorProfileIcon" class="editor-profile-icon">SMB</span>
+          <span class="editor-profile-copy">
+            <strong id="editorProfileTitle">SMB 网络连接</strong>
+            <small id="editorProfileHint">填写服务器地址、共享名和登录凭据。</small>
+          </span>
+          <span id="editorProfileState" class="editor-profile-state">未测试</span>
+        </div>
+        <div class="form-grid">
+          <label class="field wide">
+            <span>显示名称</span>
+            <input id="editorName" maxlength="90" placeholder="例如：客厅 NAS">
+          </label>
+          <label class="field">
+            <span>协议</span>
+            <select id="editorType">
+              <option value="smb">SMB / CIFS</option>
+              <option value="ftp">FTP</option>
+              <option value="local">本地目录</option>
+            </select>
+          </label>
+          <label class="switch-field compact-switch">
+            <span><strong>启用</strong><small>扫描时连接此来源</small></span>
+            <input id="editorEnabled" type="checkbox" class="switch">
+          </label>
+
+          <div id="networkFields" class="form-subgrid wide">
+            <label class="field">
+              <span>主机 / IP</span>
+              <input id="editorHost" autocomplete="off" placeholder="192.168.1.10">
+            </label>
+            <label class="field">
+              <span>端口</span>
+              <input id="editorPort" type="number" min="1" max="65535" inputmode="numeric">
+            </label>
+            <div class="field share-field wide" id="shareField">
+              <span>共享名 <em>只填共享层级</em></span>
+              <div class="field-with-action">
+                <input id="editorShare" autocomplete="off" placeholder="NasBackups">
+                <button id="enumerateSharesButton" class="secondary-button compact" type="button">枚举共享</button>
+              </div>
+              <small>例如 <code>NasBackups</code>，不要填写 <code>/PS5/Games</code>；共享内的目录请在下方浏览选择。</small>
+              <div id="smbPreview" class="smb-preview" aria-live="polite"></div>
+            </div>
+            <label class="field">
+              <span>用户名</span>
+              <input id="editorUser" autocomplete="off" placeholder="留空表示匿名">
+            </label>
+            <label class="field">
+              <span>密码</span>
+              <input id="editorPassword" type="password" autocomplete="new-password">
+              <small id="passwordHint"></small>
+            </label>
+            <label class="field" id="domainField">
+              <span>域（可选）</span>
+              <input id="editorDomain" autocomplete="off" placeholder="WORKGROUP">
+            </label>
+          </div>
+
+          <label class="field wide" id="localRootField">
+            <span>本地根目录</span>
+            <input id="editorLocalRoot" autocomplete="off" placeholder="/data/media/games">
+          </label>
+        </div>
+
+        <div id="smbNote" class="smb-guide">
+          <div class="smb-guide-head">
+            <strong>SMB 连接检查</strong>
+            <span id="smbGuideStatus">等待测试</span>
+          </div>
+          <div class="smb-guide-steps">
+            <span id="smbGuideHost"><i></i>服务器与端口</span>
+            <span id="smbGuideAuth"><i></i>账号认证</span>
+            <span id="smbGuideShare"><i></i>共享与目录</span>
+          </div>
+          <p id="smbGuideHint">先确认主机与 445 端口可达，再确认共享名和账号密码，最后检查共享内目录权限。</p>
+        </div>
+        <div id="editorTestFlow" class="editor-test-flow" hidden>
+          <div class="editor-test-head">
+            <strong>连接诊断</strong>
+            <span id="editorTestSummary"></span>
+          </div>
+          <div id="editorTestSteps" class="editor-test-steps"></div>
+        </div>
+
+        <section class="roots-section">
+          <div class="section-title-row">
+            <div>
+              <h3>扫描目录</h3>
+              <p>只扫描选中的路径；目录过多会延长扫描时间。</p>
+            </div>
+            <div class="section-title-actions">
+              <span id="editorRootsCount" class="section-count">1 个目录</span>
+              <button id="browseRootButton" class="secondary-button compact">浏览并添加</button>
+            </div>
+          </div>
+          <div id="rootsList" class="roots-list"></div>
+        </section>
+        <section id="sharePicker" class="share-picker" hidden>
+          <div class="share-picker-head">
+            <div>
+              <strong>服务器上的共享</strong>
+              <span>选择一个共享，再浏览其中的游戏目录。</span>
+            </div>
+            <button id="closeSharePicker" class="close-button dark" type="button" aria-label="收起共享列表">×</button>
+          </div>
+          <div id="shareResults" class="share-results"></div>
+        </section>
+        <p id="editorError" class="connection-status" hidden></p>
+      </div>
+      <footer class="sheet-foot">
+        <span id="editorTestHint" class="sheet-hint">测试使用当前草稿，不会自动保存。</span>
+        <div class="footer-actions">
+          <button id="editorTest" class="secondary-button">测试连接</button>
+          <div class="button-row">
+            <button id="editorCancel" class="secondary-button">取消</button>
+            <button id="editorApply" class="primary-button">应用</button>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </section>
+
+  <section id="browserPanel" class="modal-layer modal-layer-highest" hidden aria-modal="true" role="dialog">
+    <div class="sheet browser-sheet">
+      <header class="sheet-head">
+        <div>
+          <p class="eyebrow">REMOTE FILES</p>
+          <div class="browser-heading">
+            <h2>选择扫描目录</h2>
+            <span id="browserSourceLabel" class="browser-source-badge">SMB</span>
+          </div>
+        </div>
+        <button id="browserClose" class="close-button dark" aria-label="关闭">×</button>
+      </header>
+      <div class="browser-toolbar">
+        <button id="browserUp" class="browser-tool-button" title="上一级" aria-label="上一级">
+          <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path>
+          </svg>
+        </button>
+        <label class="browser-address">
+          <span class="browser-address-icon">⌂</span>
+          <input id="browserPath" class="path-input" spellcheck="false" autocomplete="off" aria-label="当前目录">
+        </label>
+        <button id="browserGo" class="secondary-button compact">打开</button>
+        <button id="browserRefresh" class="browser-tool-button" title="刷新" aria-label="刷新目录">
+          <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.2 6.5"></path><path d="M20 4v7h-7"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="browser-contextbar">
+        <nav id="browserBreadcrumbs" class="browser-breadcrumbs" aria-label="当前路径"></nav>
+        <span id="browserRootStatus" class="browser-root-status">未加入扫描目录</span>
+      </div>
+      <div class="browser-table">
+        <div class="browser-table-head" aria-hidden="true">
+          <span>名称</span>
+          <span>类型</span>
+          <span>大小</span>
+          <span>修改时间</span>
+        </div>
+        <div id="browserList" class="browser-list"></div>
+      </div>
+      <footer class="sheet-foot">
+        <div class="browser-status">
+          <i></i>
+          <span id="browserHint" class="sheet-hint">选择目录后可将其加入扫描范围。</span>
+        </div>
+        <div class="button-row">
+          <button id="browserCancel" class="secondary-button">取消</button>
+          <button id="browserChoose" class="primary-button">添加当前目录</button>
+        </div>
+      </footer>
+    </div>
+  </section>
+
+  <section id="confirmPanel" class="modal-layer modal-layer-highest" hidden aria-modal="true" role="dialog">
+    <div class="confirm-card">
+      <p class="eyebrow">PLEASE CONFIRM</p>
+      <h2 id="confirmTitle">确认操作</h2>
+      <p id="confirmMessage"></p>
+      <div class="button-row confirm-actions">
+        <button id="confirmCancel" class="secondary-button">取消</button>
+        <button id="confirmOk" class="primary-button">确认</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

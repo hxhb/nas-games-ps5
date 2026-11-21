@@ -1,0 +1,14 @@
+/.cache/
+/.deps/
+/.toolchain/
+/.happier/
+/config.env
+/.env
+/.env.*
+!/.env.example
+/dist/
+*.elf
+apps/*/*.o
+apps/*/build/
+/apps/nasgames/src/ui_assets.c
+/apps/nasgames/src/ui_assets.h
