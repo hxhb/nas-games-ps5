@@ -12,7 +12,7 @@ make nasgames
 
 `make nasgames` 构建 `apps/nasgames/nasgames.elf`，并将 `apps/nasgames/ui/` 中的资源嵌入 ELF。首次构建会获取 libsmb2 6.2。工具链、依赖下载、生成的资源数组和构建输出均在本地生成。
 
-重新构建发布包时，先把 `nasgames-1.0.0-source.tar.gz` 中归档的 `.deps/libsmb2-6.2` 放到解压目录的对应位置，再运行 `make bootstrap` 和 `make nasgames`。`make bootstrap` 会验证并获取 SDK、Clang/LLD 和 socat。归档中的 `.deps/libsmb2-6.2` 与上游 SDK 源码是重新构建所需工具的源码和许可材料。
+重新构建发布包时，先把 `nasgames-<版本>-source.tar.gz` 中归档的 `.deps/libsmb2-6.2` 放到解压目录的对应位置，再运行 `make bootstrap` 和 `make nasgames`。`make bootstrap` 会验证并获取 SDK、Clang/LLD 和 socat。归档中的 `.deps/libsmb2-6.2` 与上游 SDK 源码是重新构建所需工具的源码和许可材料。
 
 ## 本地调试
 
@@ -60,7 +60,7 @@ GitHub Release 由 `v<版本号>` 标签触发。标签版本与 `NG_VERSION` �
 
 ## 第三方依赖
 
-- SMB 客户端为 libsmb2 6.2，使用 LGPL-2.1-or-later。发行版的 `nasgames-1.0.0-source.tar.gz` 包含项目源码、libsmb2 源码及许可证。修改包内 `.deps/libsmb2-6.2` 后运行 `make bootstrap` 和 `make nasgames` 可重新链接。
+- SMB 客户端为 libsmb2 6.2，使用 LGPL-2.1-or-later。发行版的 `nasgames-<版本>-source.tar.gz` 包含项目源码、libsmb2 源码及许可证。修改包内 `.deps/libsmb2-6.2` 后运行 `make bootstrap` 和 `make nasgames` 可重新链接。
 - PS5 构建使用 PS5 Payload SDK v0.50。源码包包含这一版本的 SDK 上游源码和构建说明。
 - 图片解码、缩放和 JPEG 写入使用 `apps/nasgames/third_party/stb/` 内的头文件，各头文件随附其许可文本。
 - `apps/hello` 和 `apps/browser` 保留各自源文件中的版权与 GPL-3.0-or-later 许可声明。

@@ -149,16 +149,31 @@ remove_tree_local(const char *path)
 }
 
 static int
+path_exists(const char *path)
+{
+    struct stat st;
+    return path && path[0] && lstat(path, &st) == 0;
+}
+
+static int
+readable_regular_file(const char *path)
+{
+    struct stat st;
+    return path && path[0] && stat(path, &st) == 0 &&
+           S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
+static int
 has_title_metadata(const char *root)
 {
     char path[NG_PATH_LEN];
 
     if (ng_path_join_local(path, sizeof(path), root, "sce_sys/param.json") == 0 &&
-        access(path, R_OK) == 0) {
+        readable_regular_file(path)) {
         return 1;
     }
     if (ng_path_join_local(path, sizeof(path), root, "sce_sys/param.sfo") == 0 &&
-        access(path, R_OK) == 0) {
+        readable_regular_file(path)) {
         return 1;
     }
     return 0;
@@ -711,7 +726,7 @@ mount_folder(const char *tid, const char *src, char *error, size_t error_size)
     const char *mount_pairs[3][2];
 
     snprintf(eboot, sizeof(eboot), "%s/eboot.bin", src);
-    if (access(eboot, R_OK) != 0) {
+    if (!readable_regular_file(eboot)) {
         snprintf(error, error_size, "导入目录缺少 eboot.bin");
         return -1;
     }
@@ -766,8 +781,7 @@ stage_title(const char *tid, const char *src)
     }
     if (ensure_dir(appmeta) != 0) return -1;
     if (copy_dir_local(sce_sys, app_sce_sys) != 0) return -1;
-    if ((access(param_src, F_OK) == 0 || errno != ENOENT) &&
-        copy_param_json(param_src, param_dst) != 0) return -1;
+    if (path_exists(param_src) && copy_param_json(param_src, param_dst) != 0) return -1;
 
     dir = opendir(sce_sys);
     if (!dir) return -1;
@@ -989,7 +1003,10 @@ copy_remote_file(NgSource *source, const char *remote, const char *local,
     int prefetch_active;
 
     file = ng_source_open_file(source, remote);
-    if (!file) return -1;
+    if (!file) {
+        ng_log_error("安装文件打开失败: %s", remote);
+        return -1;
+    }
     if (ng_ensure_parent_dir(local, 0777) != 0) {
         ng_source_file_close(file);
         return -1;
@@ -1025,6 +1042,9 @@ copy_remote_file(NgSource *source, const char *remote, const char *local,
             data = buf;
         }
         if (n < 0) {
+            ng_log_error("安装文件读取失败: %s，偏移 %llu，累计写入 %llu",
+                         remote, (unsigned long long)file->offset,
+                         (unsigned long long)*bytes_done);
             rc = install_cancel_requested() ? INSTALL_CANCELED : -1;
             break;
         }
@@ -1176,9 +1196,9 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
         goto out;
     }
     if (target == NG_INSTALL_LIBRARY) {
-        if (access(dest, F_OK) == 0) {
+        if (path_exists(dest)) {
             if (ng_path_join_local(check, sizeof(check), dest, "eboot.bin") != 0 ||
-                access(check, R_OK) != 0) {
+                !readable_regular_file(check)) {
                 snprintf(error, error_size, "目标目录不完整，缺少 eboot.bin");
                 goto out;
             }
@@ -1194,7 +1214,7 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
             if (result == 0) ng_app_mark_game_library(game->id, game->title_id);
             goto out;
         }
-    } else if (access(dest, F_OK) == 0) {
+    } else if (path_exists(dest)) {
         snprintf(error, error_size,
                  "/data/homebrew/%s 已存在；如需重新安装，请先在文件管理器中删除该目录",
                  game->title_id);
@@ -1265,8 +1285,9 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
         snprintf(error, error_size, "本地导入路径过长");
         goto out;
     }
-    if (access(check, R_OK) != 0) {
-        snprintf(error, error_size, "导入目录缺少 eboot.bin");
+    if (!readable_regular_file(check)) {
+        ng_log_error("导入目录缺少 eboot.bin: %s (%s)", check, strerror(errno));
+        snprintf(error, error_size, "导入目录缺少或无法读取 eboot.bin");
         goto out;
     }
     if (!has_title_metadata(staging)) {
@@ -1648,7 +1669,7 @@ ng_installer_remount_imported(void)
         if (entry->d_name[0] == '.' || !valid_tid(entry->d_name)) continue;
         snprintf(src, sizeof(src), "%s/%s", library, entry->d_name);
         snprintf(check, sizeof(check), "%s/eboot.bin", src);
-        if (access(check, R_OK) != 0) continue;
+        if (!readable_regular_file(check)) continue;
         if (mount_folder(entry->d_name, src, error, sizeof(error)) != 0) {
             ng_log_error("重挂载 %s 失败: %s", entry->d_name, error);
         } else {

@@ -7,7 +7,7 @@
 #include <time.h>
 
 #define NG_APP_NAME "NAS Games"
-#define NG_VERSION "1.0.0"
+#define NG_VERSION "1.0.1"
 
 #define NG_MAX_SOURCES 16
 #define NG_MAX_ROOTS 12

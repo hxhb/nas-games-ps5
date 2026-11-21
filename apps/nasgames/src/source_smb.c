@@ -109,16 +109,40 @@ smb_wait_events(NgSource *source, uint64_t deadline)
 {
     SmbPriv *priv = source->priv;
     struct pollfd event = {smb2_get_fd(priv->ctx), (short)smb2_which_events(priv->ctx), 0};
+    int transport_error = 0;
+    int service_error;
+    uint32_t ntstatus;
+    const char *detail;
 
     if (event.fd >= 0 && ng_now_monotonic_ms() < deadline) {
         int ready = poll(&event, 1, 1000);
         if (ready < 0 && errno == EINTR) return 0;
-        if (ready >= 0 && !(event.revents & POLLNVAL) &&
-            smb2_service(priv->ctx, event.revents) == 0) return 0;
-        if (ready >= 0) errno = ECONNRESET;
+        if (ready < 0) {
+            transport_error = errno;
+        } else if (event.revents & POLLNVAL) {
+            transport_error = EBADF;
+        } else {
+            service_error = smb2_service(priv->ctx, event.revents);
+            if (service_error == 0) return 0;
+            if (event.revents & POLLERR) {
+                socklen_t error_size = sizeof(transport_error);
+                if (getsockopt(event.fd, SOL_SOCKET, SO_ERROR, &transport_error,
+                               &error_size) != 0 || transport_error == 0) {
+                    transport_error = ECONNRESET;
+                }
+            } else if (event.revents & POLLHUP) {
+                transport_error = ECONNRESET;
+            }
+        }
     } else {
-        errno = event.fd < 0 ? ENOTCONN : ETIMEDOUT;
+        transport_error = event.fd < 0 ? ENOTCONN : ETIMEDOUT;
     }
+    ntstatus = priv->ctx ? (uint32_t)smb2_get_nterror(priv->ctx) : 0;
+    detail = priv->ctx ? smb2_get_error(priv->ctx) : "";
+    ng_log_error("SMB %s: 接收失败 revents=0x%x errno=%d NTSTATUS=0x%08X detail=%s",
+                 source->config.id, event.revents, transport_error, ntstatus,
+                 detail && detail[0] ? detail : "(无)");
+    errno = transport_error ? transport_error : EIO;
     smb_set_error(source, "SMB 连接中断");
     smb_reset(source);
     return -1;
@@ -194,7 +218,7 @@ static int
 smb_pipeline_fill(SmbFile *file, NgSource *source, uint64_t end)
 {
     while (file->count < file->window && file->next_submit < end) {
-        size_t slot = (file->head + file->count) % SMB_READ_INFLIGHT;
+        size_t slot = (file->head + file->count) % file->window;
         uint64_t left = end - file->next_submit;
         uint32_t want = left < file->chunk ? (uint32_t)left : file->chunk;
         SmbReadJob *job;
@@ -332,7 +356,7 @@ smb_pipeline_read(SmbFile *file, NgSource *source, void *buf, size_t size)
         if (take < available) {
             file->slot_used[slot] += (uint32_t)take;
         } else {
-            file->head = (file->head + 1) % SMB_READ_INFLIGHT;
+            file->head = (file->head + 1) % file->window;
             file->count--;
         }
         if (file->pipeline_failed) break;
