@@ -24,6 +24,7 @@ int ng_installer_is_stopping(void);
 int ng_installer_queue_snapshot(NgInstallQueueItem *items, int max_items);
 int ng_installer_cancel(const char *game_id, char *message, size_t message_size);
 void ng_installer_remount_imported(void);
+void ng_installer_repair_homebrew_permissions(void);
 int ng_installer_register_title(const char *title_id, const char *title_root,
                                 char *error, size_t error_size);
 

@@ -1693,6 +1693,40 @@ ng_installer_is_stopping(void)
 }
 
 void
+ng_installer_repair_homebrew_permissions(void)
+{
+    DIR *dir = opendir("/data/homebrew");
+    int repaired = 0;
+    int failed = 0;
+
+    if (!dir) return;
+    while (1) {
+        struct dirent *entry = readdir(dir);
+        if (!entry) break;
+        if (entry->d_name[0] == '.' || !valid_tid(entry->d_name)) continue;
+        char root[NG_PATH_LEN];
+        char eboot[NG_PATH_LEN];
+        if (snprintf(root, sizeof(root), "/data/homebrew/%s", entry->d_name) >=
+            (int)sizeof(root) ||
+            snprintf(eboot, sizeof(eboot), "%s/eboot.bin", root) >=
+            (int)sizeof(eboot) ||
+            !readable_regular_file(eboot)) {
+            continue;
+        }
+        if (set_install_permissions(root) != 0) {
+            ng_log_error("修复本机游戏权限失败: %s (%s)", root, strerror(errno));
+            failed++;
+        } else {
+            repaired++;
+        }
+    }
+    closedir(dir);
+    if (repaired || failed) {
+        ng_log_info("本机游戏权限检查: 已修复 %d 个，失败 %d 个", repaired, failed);
+    }
+}
+
+void
 ng_installer_remount_imported(void)
 {
 #ifdef __PROSPERO__

@@ -213,6 +213,7 @@ main(int argc, char **argv)
     startup_log("application initialized");
     startup_log("restoring imported folders");
     ng_installer_remount_imported();
+    ng_installer_repair_homebrew_permissions();
     startup_log("imported folders restored");
     ng_app_config_snapshot(&config);
     startup_log("starting HTTP server");
