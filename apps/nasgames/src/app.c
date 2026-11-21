@@ -647,12 +647,15 @@ state_game_json(NgStrBuf *out, const NgGame *game)
     ng_strbuf_json_string(out, ng_packing_name(game->packing));
     ng_strbuf_printf(out,
                      ",\"size\":%llu,\"installable\":%s,\"installed\":%s,"
+                     "\"launchable\":%s,"
                      "\"installKnown\":%s,\"installPartial\":%s,"
                      "\"baseInstalled\":%s,\"installStatus\":\"%s\","
                      "\"libraryCopy\":%s,\"homebrewCopy\":%s",
                      (unsigned long long)game->size,
                      game->installable ? "true" : "false",
                      game->installed ? "true" : "false",
+                     game->base_installed &&
+                         ng_valid_title_id(game->title_id) ? "true" : "false",
                      game->install_known ? "true" : "false",
                      game->install_partial ? "true" : "false",
                      game->base_installed ? "true" : "false",

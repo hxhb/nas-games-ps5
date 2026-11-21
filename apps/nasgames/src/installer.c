@@ -1298,7 +1298,7 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
     ng_app_job_update("安装游戏",
                       target == NG_INSTALL_HOMEBREW
                           ? "正在安装到 /data/homebrew"
-                          : "正在安装到 NAS Games 本地库",
+                          : "正在安装到 Game Center 本地库",
                       0, 0, total);
     staging_created = 1;
     {
@@ -1533,7 +1533,7 @@ ng_installer_start(const NgGame *game, NgSource *source, NgInstallTarget target,
     if (installer_stopping) {
         pthread_mutex_unlock(&installer_lock);
         free(task);
-        snprintf(error, error_size, "NAS Games 正在停止");
+        snprintf(error, error_size, "Game Center 正在停止");
         return -1;
     }
     int duplicate = active_task && !strcmp(active_task->game.id, game->id);

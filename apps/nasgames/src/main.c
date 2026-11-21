@@ -184,12 +184,12 @@ main(int argc, char **argv)
         int lock_result = acquire_instance_lock(data_dir);
         if (lock_result == 1) {
             startup_log("another instance is already running");
-            notify("NAS Games 已在运行，本次启动已取消");
+            notify("Game Center 已在运行，本次启动已取消");
             return EXIT_FAILURE;
         }
         if (lock_result != 0) {
             startup_log("failed to acquire the single-instance lock");
-            notify("NAS Games: 无法创建单实例锁");
+            notify("Game Center: 无法创建单实例锁");
             return EXIT_FAILURE;
         }
     }
@@ -206,7 +206,7 @@ main(int argc, char **argv)
     startup_log("initializing application");
     if (ng_app_init(data_dir) != 0) {
         startup_log("application initialization failed");
-        notify("NAS Games: 初始化失败");
+        notify("Game Center: 初始化失败");
         release_instance_lock();
         return EXIT_FAILURE;
     }
@@ -221,7 +221,7 @@ main(int argc, char **argv)
     if (rc != 0) {
         startup_log("HTTP server start failed");
         ng_log_error("无法启动 HTTP 服务，端口 %d：%s", config.port, strerror(errno));
-        notify("NAS Games: HTTP 端口启动失败");
+        notify("Game Center: HTTP 端口启动失败");
         ng_app_stop();
         ng_log_close();
         release_instance_lock();
@@ -236,7 +236,7 @@ main(int argc, char **argv)
         if (ng_launcher_ensure(config.port, launcher_error,
                                sizeof(launcher_error)) != 0) {
             ng_log_error("媒体入口安装失败: %s", launcher_error);
-            notify("NAS Games 媒体入口安装失败，主服务仍可使用");
+            notify("Game Center 媒体入口安装失败，主服务仍可使用");
         }
     }
     if (ng_app_start_scanner() != 0) {
@@ -247,7 +247,7 @@ main(int argc, char **argv)
     {
         char message[128];
         snprintf(message, sizeof(message),
-                 "NAS Games 已启动，可在浏览器打开 http://127.0.0.1:%d",
+                 "Game Center 已启动，可在浏览器打开 http://127.0.0.1:%d",
                  config.port);
         notify(message);
     }
@@ -262,7 +262,7 @@ main(int argc, char **argv)
         sleep(1);
     }
 
-    ng_log_info("正在停止 NAS Games");
+    ng_log_info("正在停止 Game Center");
     ng_http_stop();
     ng_app_stop();
     ng_log_close();

@@ -181,12 +181,12 @@ ng_launcher_ensure(int port, char *error, size_t error_size)
     ng_strbuf_init(&json);
     if (ng_strbuf_printf(&json, "{\n  \"applicationCategoryType\": %d,\n"
                            "  \"titleId\": \"%s\",\n"
-                           "  \"deeplinkUri\": \"http://127.0.0.1:%d/\",\n"
+                           "  \"deeplinkUri\": \"http://127.0.0.1:%d/?launcher=1\",\n"
                            "  \"localizedParameters\": {\n"
                            "    \"defaultLanguage\": \"zh-Hans\",\n"
-                           "    \"en-US\": { \"titleName\": \"NAS Games\" },\n"
-                           "    \"zh-Hans\": { \"titleName\": \"NAS 游戏库\" },\n"
-                           "    \"zh-Hant\": { \"titleName\": \"NAS 遊戲庫\" }\n"
+                           "    \"en-US\": { \"titleName\": \"Game Center\" },\n"
+                           "    \"zh-Hans\": { \"titleName\": \"Game Center\" },\n"
+                           "    \"zh-Hant\": { \"titleName\": \"Game Center\" }\n"
                            "  }\n"
                            "}\n",
                          NG_LAUNCHER_CATEGORY, NG_LAUNCHER_TITLE_ID, port) != 0) {

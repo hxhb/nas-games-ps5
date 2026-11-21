@@ -4,6 +4,8 @@
   const $ = (id) => document.getElementById(id);
   const ui = {
     shell: $("shell"),
+    launchScreen: $("launchScreen"),
+    launchScreenTitle: $("launchScreenTitle"),
     appVersion: $("appVersion"),
     filters: $("filters"),
     formatFilter: $("formatFilter"),
@@ -30,6 +32,8 @@
     detailSubtitle: $("detailSubtitle"),
     detailPath: $("detailPath"),
     detailStorage: $("detailStorage"),
+    launchButton: $("launchButton"),
+    launchButtonText: $("launchButtonText"),
     installButton: $("installButton"),
     detailActionTitle: $("detailActionTitle"),
     detailInstallStatus: $("detailInstallStatus"),
@@ -170,6 +174,10 @@
     transferAutoHideTimer: 0,
     transferFollowupTimer: 0,
     cancelBusy: false,
+    launchBusy: false,
+    launchScreenActive: false,
+    launchScreenGameId: "",
+    launchResetTimer: 0,
     statusTimer: 0,
     logTimer: 0,
     logBusy: false,
@@ -362,12 +370,27 @@
   function updateFormatFilterValue() {
     const label = FORMAT_LABELS[app.format] || FORMAT_LABELS.all;
     setText(ui.formatFilterValue, label);
-    ui.formatFilterButton.setAttribute("aria-label", `格式筛选，当前${label}`);
+    ui.formatFilterButton.setAttribute("aria-label",
+      `格式筛选，当前${label}`);
+    ui.formatFilterButton.title = "打开格式筛选菜单";
     for (const option of ui.formatMenu.querySelectorAll("[data-format]")) {
       const active = option.dataset.format === app.format;
       option.classList.toggle("is-active", active);
       option.setAttribute("aria-checked", active ? "true" : "false");
     }
+  }
+
+  function setFormat(format, options = {}) {
+    app.format = Object.prototype.hasOwnProperty.call(FORMAT_LABELS, format)
+      ? format : "all";
+    updateFormatFilterValue();
+    setFormatMenu(false);
+    if (options.focusButton) {
+      window.requestAnimationFrame(() => {
+        ui.formatFilterButton.focus({ preventScroll: true });
+      });
+    }
+    renderLibrary(true);
   }
 
   function setFormatMenu(open) {
@@ -529,6 +552,7 @@
         size: primary.size,
         installed: baseInstalled,
         baseInstalled,
+        launchable: group.games.some((game) => !!game.launchable),
         primaryIsContent: primary.pkgKind === "update" || primary.pkgKind === "dlc",
         hasBaseResource: group.games.some((game) =>
           game.type === "folder" || game.pkgKind === "base"),
@@ -657,7 +681,7 @@
         (game.type === "folder" && game.packing !== "plain")) {
       return { key: "homebrew", label: "PS5 本机应用目录", path: "/data/homebrew" };
     }
-    return { key: "library", label: "NAS Games 本地库", path: "/data/nasgames/library" };
+    return { key: "library", label: "Game Center 本地库", path: "/data/nasgames/library" };
   }
 
   function installPreflight(game, target) {
@@ -853,7 +877,7 @@
     container.appendChild(element("div", "empty-icon", app.state.sources.length ? "⌕" : "＋"));
     if (!app.state.sources.length) {
       container.appendChild(element("h2", "", "先连接你的 NAS"));
-      const copy = element("p", "", "添加 SMB 或 FTP 连接，选择游戏目录后，NAS Games 会扫描文件夹游戏与 PKG，并把封面显示在这里。");
+      const copy = element("p", "", "添加 SMB 或 FTP 连接，选择游戏目录后，Game Center 会扫描文件夹游戏与 PKG，并把封面显示在这里。");
       container.appendChild(copy);
       const button = element("button", "primary-button", "添加第一个连接");
       button.type = "button";
@@ -955,7 +979,7 @@
       setText(ui.noticeStrip, "所有连接都已停用。开启至少一个连接后才能扫描游戏。");
     } else if (app.refreshFailed) {
       ui.noticeStrip.hidden = false;
-      setText(ui.noticeStrip, "与 NAS Games payload 的连接暂时中断，正在重试。");
+      setText(ui.noticeStrip, "与 Game Center payload 的连接暂时中断，正在重试。");
     } else {
       ui.noticeStrip.hidden = true;
       setText(ui.noticeStrip, "");
@@ -1351,7 +1375,9 @@
 
     const compressed = game.type === "folder" && game.packing !== "plain";
     const installed = !!group.installed;
+    const launchable = !!group.launchable;
     const installedMeta = [
+      launchable ? "可直接启动" : "",
       game.installedVersion ? `系统版本 ${game.installedVersion}` : "",
       game.libraryCopy ? "已注册到主界面" : "",
       installed && !game.installedVersion && !game.libraryCopy ? "系统安装状态已确认" : "",
@@ -1359,7 +1385,8 @@
     ui.detailInstalledState.hidden = !installed;
     setText(ui.detailInstalledMeta,
       installedMeta.join(" · ") || "基础游戏已安装，无需再次安装");
-    setText(ui.detailActionTitle, installed ? "游戏内容" : "安装与内容");
+    setText(ui.detailActionTitle,
+      launchable ? "启动与内容" : installed ? "游戏内容" : "安装与内容");
     ui.detailInstallStatus.className = "detail-install-status " + (
       installed ? "good" :
       group.primaryIsContent || group.baseInstalled === false ? "warn" :
@@ -1371,6 +1398,11 @@
 
     ui.detailTechNote.hidden = true;
     setText(ui.detailTechNote, "");
+    ui.launchButton.hidden = !launchable;
+    ui.launchButton.disabled = !!app.launchBusy;
+    ui.launchButton.classList.toggle("is-launching", !!app.launchBusy);
+    setText(ui.launchButtonText, app.launchBusy ? "正在启动…" : "启动游戏");
+    ui.launchButton.dataset.defaultLabel = "启动游戏";
     ui.installButton.disabled = false;
     ui.installButton.hidden = installed;
 
@@ -1408,6 +1440,13 @@
       setText(ui.detailHint, [installed ? "基础游戏已安装，无需重复安装。" : "", updateHint,
         "同一游戏的补丁和 DLC 已合并在下方列表，系统安装器会通过本地 HTTP 流读取 NAS 上的 PKG。"]
         .filter(Boolean).join(" "));
+    }
+    if (installed && launchable) {
+      setText(ui.detailHint,
+        "基础游戏已安装，可直接启动；启动后会退出当前网页。补丁和 DLC 可在下方单独管理。");
+    } else if (installed) {
+      setText(ui.detailHint,
+        "系统已确认基础游戏安装，但当前记录缺少可启动的 Title ID。");
     }
     ui.installButton.dataset.defaultLabel = ui.installButton.textContent;
     app.detailSpaceKey = "";
@@ -1475,7 +1514,7 @@
     const insufficient = !registrationOnly && required > 0 && required > free;
     const label = game.type === "pkg"
       ? "PS5 系统盘"
-      : game.packing !== "plain" ? "本机应用目录" : "NAS Games 本地库";
+      : game.packing !== "plain" ? "本机应用目录" : "Game Center 本地库";
     const sizeText = sizeInfo.status === "known" || required > 0
       ? formatBytes(required)
       : sizeInfo.status === "error" ? "统计失败" : "统计中…";
@@ -1525,7 +1564,9 @@
 
   function focusDetailAction() {
     const packageButton = ui.detailPackageList.querySelector("button:not([disabled])");
-    const target = !ui.installButton.hidden && !ui.installButton.disabled
+    const target = !ui.launchButton.hidden && !ui.launchButton.disabled
+      ? ui.launchButton
+      : !ui.installButton.hidden && !ui.installButton.disabled
       ? ui.installButton
       : packageButton || ui.detailClose;
     target.focus({ preventScroll: true });
@@ -1553,6 +1594,7 @@
         app.lastJobKey = "";
         app.transferDismissedFor = "";
         app.cancelBusy = false;
+        app.launchBusy = false;
         app.scanPending = false;
         app.scanSequence = null;
         app.sizeStates = Object.create(null);
@@ -1758,6 +1800,74 @@
       showToast(started);
       scheduleStatusPoll(300);
     });
+  }
+
+  function isLauncherMode() {
+    return new URLSearchParams(window.location.search).get("launcher") === "1" ||
+      /playstation/i.test(navigator.userAgent || "");
+  }
+
+  function resetLaunchControl(gameId) {
+    app.launchBusy = false;
+    const selected = findGameGroup(app.selectedGameId);
+    if (!ui.detailPanel.hidden && selected && selected.primary.id === gameId) {
+      ui.launchButton.disabled = false;
+      ui.launchButton.classList.remove("is-launching");
+      setText(ui.launchButtonText, "启动游戏");
+    }
+  }
+
+  function finishLaunchScreen(warn) {
+    const gameId = app.launchScreenGameId;
+    window.clearTimeout(app.launchResetTimer);
+    app.launchResetTimer = 0;
+    app.launchScreenActive = false;
+    app.launchScreenGameId = "";
+    ui.launchScreen.hidden = true;
+    resetLaunchControl(gameId);
+    if (warn) {
+      showToast("启动请求未完成，请检查运行日志", "warning");
+    }
+  }
+
+  function beginLaunchScreen(title, gameId) {
+    window.clearTimeout(app.launchResetTimer);
+    app.launchScreenActive = true;
+    app.launchScreenGameId = gameId;
+    setText(ui.launchScreenTitle, title);
+    ui.launchScreen.hidden = false;
+    app.launchResetTimer = window.setTimeout(() => {
+      app.launchResetTimer = 0;
+      if (document.hidden) return;
+      finishLaunchScreen(true);
+    }, 12000);
+  }
+
+  async function launchGame() {
+    const group = findGameGroup(app.selectedGameId);
+    if (!group || !group.launchable || app.launchBusy) return;
+    const gameId = group.primary.id;
+    const title = group.title || group.titleId || "该游戏";
+
+    app.launchBusy = true;
+    ui.launchButton.disabled = true;
+    ui.launchButton.classList.add("is-launching");
+    setText(ui.launchButtonText, "正在启动…");
+    try {
+      const result = await api("/api/launch", {
+        method: "POST",
+        body: { gameId },
+      });
+      if (isLauncherMode()) {
+        beginLaunchScreen(title, gameId);
+        return;
+      }
+      showToast(result.message || `正在启动“${title}”`, "success");
+    } catch (error) {
+      showToast(`无法启动“${title}”：${error.message}`, "error");
+    } finally {
+      if (!app.launchScreenActive) resetLaunchControl(gameId);
+    }
   }
 
   function cancelInstallJob() {
@@ -1968,7 +2078,7 @@
     } else if (!sources.length) {
       ui.settingsHealth.hidden = false;
       ui.settingsHealth.className = "settings-health info";
-      setText(ui.settingsHealth, "添加 SMB、FTP 或本地目录后，NAS Games 会自动扫描并建立海报墙。");
+      setText(ui.settingsHealth, "添加 SMB、FTP 或本地目录后，Game Center 会自动扫描并建立海报墙。");
     } else if (!enabled.length) {
       ui.settingsHealth.hidden = false;
       ui.settingsHealth.className = "settings-health warn";
@@ -2898,6 +3008,7 @@
   }
 
   function topLayer() {
+    if (!ui.launchScreen.hidden) return ui.launchScreen;
     if (!ui.confirmPanel.hidden) return ui.confirmPanel;
     if (!ui.browserPanel.hidden) return ui.browserPanel;
     if (!ui.editorPanel.hidden) return ui.editorPanel;
@@ -3073,11 +3184,24 @@
   ui.formatMenu.addEventListener("click", (event) => {
     const option = event.target.closest("[data-format]");
     if (!option) return;
-    app.format = option.dataset.format;
-    updateFormatFilterValue();
-    setFormatMenu(false);
-    ui.formatFilterButton.focus({ preventScroll: true });
-    renderLibrary(true);
+    event.preventDefault();
+    event.stopPropagation();
+    setFormat(option.dataset.format, { focusButton: true });
+  });
+
+  ui.formatMenu.addEventListener("keydown", (event) => {
+    const options = Array.from(ui.formatMenu.querySelectorAll("[data-format]"));
+    const index = options.indexOf(document.activeElement);
+    if (index < 0) return;
+    let next = index;
+    if (event.key === "ArrowDown") next = (index + 1) % options.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + options.length) % options.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = options.length - 1;
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+    options[next].focus({ preventScroll: true });
   });
 
   ui.formatFilter.addEventListener("focusout", () => {
@@ -3120,6 +3244,7 @@
   ui.clearHistoryButton.addEventListener("click", clearTransferHistory);
   ui.detailClose.addEventListener("click", closeDetail);
   ui.detailBackdrop.addEventListener("click", closeDetail);
+  ui.launchButton.addEventListener("click", launchGame);
   ui.installButton.addEventListener("click", () => {
     const group = findGameGroup(app.selectedGameId);
     if (!group) return;
@@ -3320,11 +3445,16 @@
     setupGamepad();
     await refreshState(true);
     if (!app.state) {
-      ui.library.replaceChildren(element("div", "empty-state", "正在连接 NAS Games payload..."));
+      ui.library.replaceChildren(element("div", "empty-state", "正在连接 Game Center payload..."));
     }
     scheduleStatusPoll();
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
+        if (app.launchScreenActive) {
+          window.setTimeout(() => {
+            if (app.launchScreenActive) finishLaunchScreen(false);
+          }, 250);
+        }
         refreshState(true).finally(() => scheduleStatusPoll());
       }
     });

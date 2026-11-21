@@ -88,6 +88,104 @@ select:focus-visible,
   background: #682c96;
 }
 
+.launch-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(126, 161, 255, 0.2), transparent 28%),
+    radial-gradient(circle at 50% 110%, rgba(104, 44, 150, 0.16), transparent 36%),
+    #03050a;
+}
+
+.launch-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.025), transparent 42%);
+  pointer-events: none;
+}
+
+.launch-screen-inner {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 13px;
+  width: min(760px, 80vw);
+  text-align: center;
+  animation: launch-screen-in 260ms ease-out;
+}
+
+.launch-screen img {
+  width: 82px;
+  height: 82px;
+  margin-bottom: 5px;
+  filter: drop-shadow(0 16px 34px rgba(104, 142, 255, 0.34));
+}
+
+.launch-screen p {
+  margin: 0;
+  color: var(--accent-bright);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 4.5px;
+}
+
+.launch-screen h2 {
+  max-width: 100%;
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(30px, 3.5vw, 54px);
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.launch-screen-line {
+  position: relative;
+  width: 184px;
+  height: 2px;
+  margin-top: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.launch-screen-line::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent-bright), transparent);
+  animation: launch-screen-scan 1.15s ease-in-out infinite;
+}
+
+.launch-screen small {
+  color: #7f8ca6;
+  font-size: 12px;
+  font-weight: 620;
+  letter-spacing: 0.8px;
+}
+
+@keyframes launch-screen-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+}
+
+@keyframes launch-screen-scan {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(340%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .launch-screen-inner,
+  .launch-screen-line::after {
+    animation: none;
+  }
+}
+
 .shell {
   width: 100%;
   height: 100%;
@@ -3941,7 +4039,7 @@ kbd {
   }
 }
 
-/* NAS Games control center, transfer center and immersive detail view */
+/* Game Center control center, transfer center and immersive detail view */
 
 .brand-mark {
   overflow: hidden;
@@ -4545,6 +4643,37 @@ kbd {
   min-height: 43px;
   border-radius: 12px;
   font-size: 12px;
+}
+
+.detail-actions .launch-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-color: rgba(146, 245, 207, 0.42);
+  background: linear-gradient(145deg, #bdf7df, #67e2ad);
+  color: #071b14;
+  box-shadow: 0 12px 30px rgba(46, 174, 125, 0.24);
+}
+
+.detail-actions .launch-button .launch-icon {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.detail-actions .launch-button:hover:not(:disabled) {
+  box-shadow: 0 15px 34px rgba(46, 174, 125, 0.3);
+}
+
+.detail-actions .launch-button.is-launching .launch-icon {
+  animation: launch-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes launch-pulse {
+  from { opacity: 0.55; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .detail-hint {

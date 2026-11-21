@@ -38,10 +38,10 @@ nasgames:
 
 deploy-nasgames: nasgames
 	@bash scripts/deploy.sh apps/nasgames/nasgames.elf
-	@printf 'Waiting for NAS Games on http://%s:%s ...\n' "$${PS5_HOST}" "$(NASGAMES_PORT)"
+	@printf 'Waiting for Game Center on http://%s:%s ...\n' "$${PS5_HOST}" "$(NASGAMES_PORT)"
 	@for i in $$(seq 1 20); do \
 		if curl -fsS --max-time 2 "http://$${PS5_HOST}:$(NASGAMES_PORT)/api/health" >/dev/null; then \
-			printf 'NAS Games is ready: http://%s:%s\n' "$${PS5_HOST}" "$(NASGAMES_PORT)"; \
+			printf 'Game Center is ready: http://%s:%s\n' "$${PS5_HOST}" "$(NASGAMES_PORT)"; \
 			exit 0; \
 		fi; \
 		sleep 1; \

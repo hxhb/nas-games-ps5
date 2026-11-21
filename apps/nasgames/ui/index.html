@@ -4,19 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#070a12">
-  <title>NAS Games</title>
+  <title>Game Center</title>
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
-  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/app.css?v=1.0.5">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
   <div class="ambient ambient-b"></div>
   <div id="shell" class="shell">
     <header class="topbar">
-      <div class="brand" aria-label="NAS Games">
+      <div class="brand" aria-label="Game Center">
         <span class="brand-mark"><img src="/icon.svg" alt=""></span>
         <span class="brand-copy">
-          <strong>NAS GAMES</strong>
+          <strong>GAME CENTER</strong>
           <small>REMOTE LIBRARY</small>
         </span>
       </div>
@@ -29,7 +29,7 @@
         <div id="formatFilter" class="filter-format">
           <button id="formatFilterButton" class="filter filter-format-button"
                   type="button" aria-haspopup="true" aria-expanded="false"
-                  aria-controls="formatMenu">
+                  aria-controls="formatMenu" title="打开格式筛选菜单">
             <span>格式</span>
             <span id="formatFilterValue" class="filter-format-value">全部</span>
             <svg class="filter-chevron icon-svg" viewBox="0 0 24 24" aria-hidden="true">
@@ -180,6 +180,16 @@
     </footer>
   </div>
 
+  <section id="launchScreen" class="launch-screen" hidden aria-live="polite">
+    <div class="launch-screen-inner">
+      <img src="/icon.svg" alt="">
+      <p>GAME CENTER</p>
+      <h2 id="launchScreenTitle">正在启动游戏</h2>
+      <span class="launch-screen-line" aria-hidden="true"></span>
+      <small>正在切换到游戏</small>
+    </div>
+  </section>
+
   <section id="detailPanel" class="detail-panel" hidden aria-modal="true" role="dialog">
     <div id="detailBackdrop" class="detail-backdrop"></div>
     <article class="detail-card">
@@ -214,6 +224,12 @@
             </div>
             <div id="detailStorage" class="detail-storage" hidden></div>
             <div class="detail-actions">
+              <button id="launchButton" class="primary-button launch-button" hidden>
+                <svg class="launch-icon icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l10.5-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14Z"></path>
+                </svg>
+                <span id="launchButtonText">启动游戏</span>
+              </button>
               <button id="installButton" class="primary-button">安装到 PS5</button>
             </div>
             <p id="detailHint" class="detail-hint"></p>
@@ -261,7 +277,7 @@
           </button>
           <div class="settings-nav-foot">
             <span class="settings-nav-dot"></span>
-            <span>NAS Games <b id="appVersion"></b></span>
+            <span>Game Center <b id="appVersion"></b></span>
           </div>
         </nav>
 
@@ -326,7 +342,7 @@
               <div>
                 <p>GLOBAL</p>
                 <h3>全局设置</h3>
-                <span>这些设置对 NAS Games 的所有连接和安装任务生效。</span>
+                <span>这些设置对 Game Center 的所有连接和安装任务生效。</span>
               </div>
             </div>
             <section class="settings-card">
@@ -626,6 +642,6 @@
   </section>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=1.0.5"></script>
 </body>
 </html>

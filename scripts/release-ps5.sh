@@ -22,11 +22,11 @@ if [[ ! -f "${APP_ELF}" || ! -f "${PREPARE_ELF}" ]]; then
 fi
 
 if current="$(curl -fsS --max-time 5 "${BASE_URL}/api/state" 2>/dev/null)"; then
-    jq -e '.ok and .app == "NAS Games" and .job.state != "running" and .job.queued == 0 and (.scan.busy | not)' \
-        >/dev/null <<<"${current}" || { printf 'Wait for NAS Games scanning and installation to finish.\n' >&2; exit 1; }
+    jq -e '.ok and .app == "Game Center" and .job.state != "running" and .job.queued == 0 and (.scan.busy | not)' \
+        >/dev/null <<<"${current}" || { printf 'Wait for Game Center scanning and installation to finish.\n' >&2; exit 1; }
 fi
 
-printf 'Preparing NAS Games release for %s\n' "${PS5_HOST}"
+printf 'Preparing Game Center release for %s\n' "${PS5_HOST}"
 bash "${ROOT}/scripts/deploy.sh" "${PREPARE_ELF}"
 
 for _ in $(seq 1 20); do
@@ -36,7 +36,7 @@ for _ in $(seq 1 20); do
     sleep 0.5
 done
 if curl -fsS --max-time 1 "${BASE_URL}/api/health" >/dev/null 2>&1; then
-    printf 'The previous NAS Games instance is still listening on %s\n' "${BASE_URL}" >&2
+    printf 'The previous Game Center instance is still listening on %s\n' "${BASE_URL}" >&2
     exit 1
 fi
 sleep 2
@@ -53,7 +53,7 @@ for _ in $(seq 1 40); do
     sleep 1
 done
 if [[ "${ready}" -ne 1 ]]; then
-    printf 'NAS Games did not become ready at %s\n' "${BASE_URL}" >&2
+    printf 'Game Center did not become ready at %s\n' "${BASE_URL}" >&2
     exit 1
 fi
 
@@ -88,4 +88,4 @@ if [[ "${remaining}" != "0" ]]; then
     exit 1
 fi
 
-printf 'NAS Games is ready at %s with clean release data.\n' "${BASE_URL}"
+printf 'Game Center is ready at %s with clean release data.\n' "${BASE_URL}"

@@ -1,4 +1,4 @@
-name: Release NAS Games
+name: Release Game Center
 
 on:
   push:
@@ -68,7 +68,7 @@ jobs:
             test "$published" = true
           else
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-              --title "NAS Games $version" --notes-file docs/release-notes.md
+              --title "Game Center $version" --notes-file docs/release-notes.md
           fi
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             "$release_dir/nasgames.elf" "$release_dir/SHA256SUMS" \

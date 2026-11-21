@@ -20,7 +20,7 @@ release_dir="${ROOT}/dist/nasgames-${version}"
 mkdir -p "${release_dir}"
 install -m 0755 "${payload}" "${release_dir}/nasgames.elf"
 (cd "${release_dir}" && sha256sum nasgames.elf > SHA256SUMS && sha256sum -c SHA256SUMS)
-printf 'NAS Games %s artifacts: %s\n' "${version}" "${release_dir}"
+printf 'Game Center %s artifacts: %s\n' "${version}" "${release_dir}"
 
 pm_request() {
     curl -fsS --compressed --max-time 15 "${request_header[@]}" "$@"
@@ -28,15 +28,15 @@ pm_request() {
 
 process_pid() {
     pm_request "${pm_url}/processes_list" |
-        jq -r '.processes | map(select(.name == "nasgames.elf") | .pid) | if length <= 1 then .[0] // empty else error("multiple NAS Games processes") end'
+        jq -r '.processes | map(select(.name == "nasgames.elf") | .pid) | if length <= 1 then .[0] // empty else error("multiple Game Center processes") end'
 }
 
 state=""
 pid="$(process_pid)"
 if [[ -n "${pid}" ]]; then
     state="$(curl -fsS --max-time 5 "${base_url}/api/state")"
-    jq -e '.ok and .app == "NAS Games" and .job.state != "running" and .job.queued == 0 and (.scan.busy | not)' \
-        >/dev/null <<<"${state}" || { printf 'Wait for NAS Games scanning and installation to finish.\n' >&2; exit 1; }
+    jq -e '.ok and .app == "Game Center" and .job.state != "running" and .job.queued == 0 and (.scan.busy | not)' \
+        >/dev/null <<<"${state}" || { printf 'Wait for Game Center scanning and installation to finish.\n' >&2; exit 1; }
     configured_port="$(curl -fsS --max-time 5 "${base_url}/api/settings" | jq -er '.port')"
 else
     configured_port="${http_port}"
@@ -47,14 +47,14 @@ PM_URL="${pm_url}" bash "${ROOT}/scripts/pm-upload.sh" "${release_dir}/nasgames.
 if [[ -n "${pid}" ]]; then
     if curl -fsS --max-time 5 -X POST -H 'Content-Type: application/json' \
         "${base_url}/api/shutdown" >/dev/null 2>&1; then
-        printf 'NAS Games is shutting down.\n'
+        printf 'Game Center is shutting down.\n'
     elif [[ "$(jq -r '.version' <<<"${state}")" == "0.1.0" ]]; then
         curl -fsS --max-time 5 "${base_url}/api/state" |
             jq -e '.ok and .version == "0.1.0" and .job.state != "running" and .job.queued == 0 and (.scan.busy | not)' >/dev/null
         [[ "$(process_pid)" == "${pid}" ]]
         pm_request -X POST "${pm_url}/process_kill?pid=${pid}" >/dev/null
     else
-        printf 'NAS Games refused to shut down. Check the active tasks and retry.\n' >&2
+        printf 'Game Center refused to shut down. Check the active tasks and retry.\n' >&2
         exit 1
     fi
 
@@ -67,7 +67,7 @@ if [[ -n "${pid}" ]]; then
         sleep 1
     done
     if [[ "${stopped}" != 1 ]]; then
-        printf 'NAS Games did not exit within 45 seconds.\n' >&2
+        printf 'Game Center did not exit within 45 seconds.\n' >&2
         exit 1
     fi
 fi
@@ -78,11 +78,11 @@ for _ in $(seq 1 30); do
     if curl -fsS --max-time 2 "${base_url}/api/health" 2>/dev/null |
         jq -e --arg version "${version}" '.ok and .version == $version' >/dev/null; then
         [[ -n "$(process_pid)" ]]
-        printf 'NAS Games %s is running at %s via Payload Manager.\n' "${version}" "${base_url}"
+        printf 'Game Center %s is running at %s via Payload Manager.\n' "${version}" "${base_url}"
         exit 0
     fi
     sleep 1
 done
 
-printf 'NAS Games %s did not answer on %s.\n' "${version}" "${base_url}" >&2
+printf 'Game Center %s did not answer on %s.\n' "${version}" "${base_url}" >&2
 exit 1

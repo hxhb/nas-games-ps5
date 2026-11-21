@@ -27,6 +27,7 @@
 #include "log.h"
 #include "source.h"
 #include "source_prefetch.h"
+#include "title_launcher.h"
 #include "ui_assets.h"
 #include "util.h"
 
@@ -200,7 +201,7 @@ send_header(HttpResponse *resp, int code, const char *reason,
         n = snprintf(header, sizeof(header),
                      "HTTP/1.1 %d %s\r\n"
                      "Connection: close\r\n"
-                     "Server: nasgames/%s\r\n"
+                     "Server: gamecenter/%s\r\n"
                      "Content-Type: %s\r\n"
                      "Content-Length: %zu\r\n"
                      "%s"
@@ -212,7 +213,7 @@ send_header(HttpResponse *resp, int code, const char *reason,
         n = snprintf(header, sizeof(header),
                      "HTTP/1.1 %d %s\r\n"
                      "Connection: close\r\n"
-                     "Server: nasgames/%s\r\n"
+                     "Server: gamecenter/%s\r\n"
                      "Content-Type: %s\r\n"
                      "%s"
                      "\r\n",
@@ -732,6 +733,67 @@ invalid:
 }
 
 static int
+handle_launch(const HttpRequest *req, HttpResponse *resp)
+{
+    NgJsonDoc doc;
+    NgStrBuf sb;
+    NgGame game;
+    char id[24];
+    char error[NG_ERROR_LEN];
+    char message[NG_TITLE_LEN + 32];
+    NgTitleLaunchResult launch_result;
+    int rc;
+
+    if (parse_json_object(req->body, &doc) != 0) {
+        return json_error_response(resp, 400, "Bad Request", "请求格式无效");
+    }
+    ng_json_obj_string(&doc, 0, "gameId", id, sizeof(id), "");
+    ng_json_free(&doc);
+    if (!id[0]) {
+        return json_error_response(resp, 400, "Bad Request", "缺少 gameId");
+    }
+    if (ng_app_copy_game(id, &game) != 0) {
+        return json_error_response(resp, 404, "Not Found",
+                                   "游戏不存在，请重新扫描");
+    }
+    if (!ng_valid_title_id(game.title_id)) {
+        return json_error_response(resp, 409, "Conflict",
+                                   "缺少有效的 Title ID，无法直接启动");
+    }
+    if (!game.base_installed) {
+        return json_error_response(resp, 409, "Conflict",
+                                   "游戏尚未安装到 PS5");
+    }
+    if (ng_installer_is_busy()) {
+        return json_error_response(resp, 409, "Conflict",
+                                   "安装或传输任务正在运行，请完成后再启动游戏");
+    }
+    launch_result = ng_title_launcher_launch(game.title_id, error, sizeof(error));
+    if (launch_result == NG_TITLE_LAUNCH_BUSY) {
+        return json_error_response(resp, 409, "Conflict", error);
+    }
+    if (launch_result != NG_TITLE_LAUNCH_ACCEPTED) {
+        ng_log_error("启动 %s（%s）失败: %s",
+                     game.title_name, game.title_id, error);
+        return json_error_response(resp, 502, "Bad Gateway", error);
+    }
+
+    ng_strbuf_init(&sb);
+    ng_strbuf_append(&sb, "{\"ok\":true,\"titleId\":");
+    ng_strbuf_json_string(&sb, game.title_id);
+    ng_strbuf_append(&sb, ",\"title\":");
+    ng_strbuf_json_string(&sb, game.title_name);
+    ng_strbuf_append(&sb, ",\"message\":");
+    snprintf(message, sizeof(message), "正在启动“%s”", game.title_name);
+    ng_strbuf_json_string(&sb, message);
+    ng_strbuf_append(&sb, ",\"queued\":true");
+    ng_strbuf_append(&sb, "}");
+    rc = respond_json_sb(resp, 202, "Accepted", &sb);
+    ng_strbuf_free(&sb);
+    return rc;
+}
+
+static int
 handle_cancel_job(const HttpRequest *req, HttpResponse *resp)
 {
     NgJsonDoc doc;
@@ -1129,6 +1191,9 @@ handle_api(const HttpRequest *req, HttpResponse *resp)
     if (!strcmp(req->path, "/api/install") && !strcmp(req->method, "POST")) {
         return handle_install(req, resp);
     }
+    if (!strcmp(req->path, "/api/launch") && !strcmp(req->method, "POST")) {
+        return handle_launch(req, resp);
+    }
     if (!strcmp(req->path, "/api/cancel") && !strcmp(req->method, "POST")) {
         return handle_cancel_job(req, resp);
     }
@@ -1175,7 +1240,7 @@ handle_static(const HttpRequest *req, HttpResponse *resp)
     for (size_t i = 0; i < ng_ui_asset_count; i++) {
         if (!strcmp(ng_ui_assets[i].name, wanted)) {
             return respond_buffer(resp, 200, "OK", ng_ui_assets[i].content_type,
-                                  "Cache-Control: no-cache\r\n",
+                                  "Cache-Control: no-store, max-age=0\r\n",
                                   ng_ui_assets[i].data, ng_ui_assets[i].size);
         }
     }

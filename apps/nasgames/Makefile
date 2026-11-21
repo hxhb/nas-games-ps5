@@ -35,6 +35,7 @@ SOURCES := \
 	src/source_prefetch.c \
 	src/source_smb.c \
 	src/storage.c \
+	src/title_launcher.c \
 	src/util.c \
 	$(UI_SOURCE)
 

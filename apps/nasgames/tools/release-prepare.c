@@ -164,7 +164,7 @@ stop_previous_instance(int *lock_fd)
     }
     if (fscanf(file, "%ld", &pid) != 1 || pid <= 1 || pid > INT_MAX) {
         fclose(file);
-        fprintf(stderr, "Invalid NAS Games lock file\n");
+        fprintf(stderr, "Invalid Game Center lock file\n");
         return -1;
     }
     fclose(file);
@@ -174,7 +174,7 @@ stop_previous_instance(int *lock_fd)
         return -1;
     }
     if (kill((pid_t)pid, SIGTERM) != 0) {
-        fprintf(stderr, "Cannot stop NAS Games process %ld: %s\n",
+        fprintf(stderr, "Cannot stop Game Center process %ld: %s\n",
                 pid, strerror(errno));
         return -1;
     }
@@ -182,7 +182,7 @@ stop_previous_instance(int *lock_fd)
         if (flock(descriptor, LOCK_EX | LOCK_NB) == 0) return 0;
         nanosleep(&delay, NULL);
     }
-    fprintf(stderr, "NAS Games process %ld did not stop in time\n", pid);
+    fprintf(stderr, "Game Center process %ld did not stop in time\n", pid);
     return -1;
 }
 

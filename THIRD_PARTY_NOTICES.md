@@ -1,6 +1,6 @@
 # Third-party notices
 
-NAS Games uses libsmb2 6.2, which is licensed under the GNU Lesser General Public
+Game Center uses libsmb2 6.2, which is licensed under the GNU Lesser General Public
 License, version 2.1 or later. The release source archive includes the complete
 library sources and the licence at `.deps/libsmb2-6.2/LICENCE-LGPL-2.1.txt`.
 Users may modify their copy of the library and reverse engineer the linked

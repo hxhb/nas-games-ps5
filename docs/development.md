@@ -1,4 +1,4 @@
-# NAS Games 开发与构建
+# Game Center 开发与构建
 
 ## 构建环境
 
@@ -33,7 +33,7 @@ apps/nasgames/build/nasgames-host ./apps/nasgames/build/host-data
 | `make pm-autoload-nasgames` | 上传并将 `local/nasgames` 加入 Autoload |
 | `make release-nasgames` | 生成版本化 ELF 和校验文件，在 Payload Manager 更新运行中的服务并验证版本 |
 | `make deploy-nasgames` | 通过 `elfldr` 加载 ELF |
-| `make nasgames-health` | 检查 NAS Games HTTP 服务 |
+| `make nasgames-health` | 检查 Game Center HTTP 服务 |
 
 Payload Manager 默认使用 `8084`，可用 `PM_URL` 指定管理地址。`elfldr` 默认使用 `9021`。更新前等待安装和扫描结束。`make release-nasgames-clean` 适用于实机开发环境的清理，会移除项目的测试样本与对应的临时来源。
 
@@ -41,7 +41,7 @@ GitHub Release 由 `v<版本号>` 标签触发。标签版本与 `NG_VERSION` �
 
 ## 兼容性和诊断
 
-- `/api/health` 返回服务版本。`/api/state` 返回目录、存储和安装状态，`catalogRevision` 用于界面缓存失效。`/api/log` 提供扫描和传输诊断。
+- `/api/health` 返回服务版本。`/api/state` 返回目录、存储、安装和启动状态，`catalogRevision` 用于界面缓存失效。`/api/launch` 通过 PS5 系统启动器打开已安装 Title。`/api/log` 提供扫描和传输诊断。
 - SMB 使用异步读取流水线。大文件的预读与写入或 HTTP 发送重叠，SMB 2.0 使用较小的读取块。日志包含协商协议、块大小和吞吐量。
 - 完整安装基准使用 TLOU 基础版：47,171,305,472 字节，621 秒，系统状态平均约 72.4 MiB/s，采样速度中位数约 74.8 MiB/s。NAS、SMB 版本和磁盘缓存会影响实际速度。
 - PKG 元数据优先读取包内的 `param.json` 或 `param.sfo`。特殊包可以在同目录添加一个同名的 `.meta.json`，例如为 `Example.pkg` 添加 `Example.meta.json`。
