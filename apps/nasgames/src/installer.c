@@ -149,6 +149,41 @@ remove_tree_local(const char *path)
 }
 
 static int
+set_install_permissions(const char *path)
+{
+    struct stat st;
+    int rc = 0;
+
+    if (lstat(path, &st) != 0) return -1;
+    if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) return 0;
+    if (chmod(path, 0777) != 0) return -1;
+    if (!S_ISDIR(st.st_mode)) return 0;
+
+    DIR *dir = opendir(path);
+    if (!dir) return -1;
+    while (1) {
+        struct dirent *entry = readdir(dir);
+        if (!entry) break;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        char child[NG_PATH_LEN];
+        if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >=
+            (int)sizeof(child)) {
+            errno = ENAMETOOLONG;
+            rc = -1;
+            break;
+        }
+        if (set_install_permissions(child) != 0) {
+            rc = -1;
+            break;
+        }
+    }
+    int error = errno;
+    closedir(dir);
+    errno = error;
+    return rc;
+}
+
+static int
 path_exists(const char *path)
 {
     struct stat st;
@@ -1207,6 +1242,10 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
                          "目标目录不完整，缺少 sce_sys/param.json 或 param.sfo");
                 goto out;
             }
+            if (set_install_permissions(dest) != 0) {
+                snprintf(error, error_size, "无法修复安装目录权限: %s", strerror(errno));
+                goto out;
+            }
             result = install_begin_commit();
             if (result != 0) goto out;
             ng_app_job_update("注册标题", "目标目录已存在，正在重新挂载并注册", 99, 0, 0);
@@ -1279,6 +1318,10 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
     }
     if (done != total) {
         snprintf(error, error_size, "源目录大小在复制期间发生变化，请重新安装");
+        goto out;
+    }
+    if (set_install_permissions(staging) != 0) {
+        snprintf(error, error_size, "无法设置安装目录权限: %s", strerror(errno));
         goto out;
     }
     if (ng_path_join_local(check, sizeof(check), staging, "eboot.bin") != 0) {

@@ -2,7 +2,7 @@
 
 NAS Games 是一个 PS5 Homebrew payload。它在 PS5 上运行本地 Web 服务，从 SMB、FTP 和本机目录扫描游戏，并通过适合电视和手柄操作的海报墙查看、安装和管理资源。
 
-[下载 NAS Games 1.0.1](https://github.com/hxhb/nas-games-ps5/releases/tag/v1.0.1) · [开发与构建](docs/development.md)
+[下载 NAS Games 1.0.2](https://github.com/hxhb/nas-games-ps5/releases/tag/v1.0.2) · [开发与构建](docs/development.md)
 
 ![NAS Games 游戏库。使用演示数据展示已安装和未安装的游戏](docs/screenshots/library.png)
 
