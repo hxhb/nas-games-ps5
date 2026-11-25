@@ -11,5 +11,6 @@ typedef enum {
 
 NgTitleLaunchResult ng_title_launcher_launch(const char *title_id,
                                              char *error, size_t error_size);
+int ng_title_launcher_close_web_ui(char *error, size_t error_size);
 
 #endif

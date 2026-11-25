@@ -71,8 +71,21 @@ find_entry(const NgSourceList *list, const char *name)
 static void
 child_path(char *out, size_t out_size, const char *parent, const char *name)
 {
+    if (ng_source_child_path(out, out_size, parent, name) != 0) {
+        out[0] = '\0';
+    }
+}
+
+static void
+relative_path(char *out, size_t out_size, const char *parent, const char *relative)
+{
+    char combined[NG_PATH_LEN];
     const char *separator = !strcmp(parent, "/") ? "" : "/";
-    if (snprintf(out, out_size, "%s%s%s", parent, separator, name) >= (int)out_size) {
+
+    if (!relative || !relative[0] ||
+        snprintf(combined, sizeof(combined), "%s%s%s", parent, separator, relative) >=
+            (int)sizeof(combined) ||
+        ng_path_normalize(combined, out, out_size) != 0) {
         out[0] = '\0';
     }
 }
@@ -352,7 +365,7 @@ add_folder_game(NgSource *source, const NgConfig *cfg, const char *source_name,
     const NgSourceEntry *index;
 
     memset(&meta, 0, sizeof(meta));
-    child_path(param_path, sizeof(param_path), path, "sce_sys/param.json");
+    relative_path(param_path, sizeof(param_path), path, "sce_sys/param.json");
     if (ng_source_read_all(source, param_path, NG_MAX_META_BYTES, &data, &data_size) >= 0) {
         if (ng_app_meta_from_json(data, &meta) != 0) {
             ng_log_error("%s: 无效的 param.json", path);
@@ -361,7 +374,7 @@ add_folder_game(NgSource *source, const NgConfig *cfg, const char *source_name,
         data = NULL;
     }
     if (!ng_valid_title_id(meta.title_id)) {
-        child_path(param_path, sizeof(param_path), path, "sce_sys/param.sfo");
+        relative_path(param_path, sizeof(param_path), path, "sce_sys/param.sfo");
         if (ng_source_read_all(source, param_path, NG_MAX_META_BYTES, &data, &data_size) >= 0) {
             if (ng_app_meta_from_sfo(data, data_size, &meta) != 0) {
                 ng_log_error("%s: 无效的 param.sfo", path);
@@ -409,14 +422,14 @@ add_folder_game(NgSource *source, const NgConfig *cfg, const char *source_name,
         game.homebrew_copy = state.homebrew;
     }
 
-    child_path(icon_path, sizeof(icon_path), path, "sce_sys/icon0.png");
+    relative_path(icon_path, sizeof(icon_path), path, "sce_sys/icon0.png");
     if (art_path(game.icon_file, sizeof(game.icon_file), cfg, game.id, "icon.png") != 0) {
         game.icon_file[0] = '\0';
     }
     if (game.icon_file[0]) cache_art(source, icon_path, game.icon_file);
     if (!local_file_exists(game.icon_file)) game.icon_file[0] = '\0';
 
-    child_path(pic0_path, sizeof(pic0_path), path, "sce_sys/pic0.png");
+    relative_path(pic0_path, sizeof(pic0_path), path, "sce_sys/pic0.png");
     if (art_path(game.pic0_file, sizeof(game.pic0_file), cfg, game.id, "pic0.png") != 0) {
         game.pic0_file[0] = '\0';
     }
@@ -431,7 +444,7 @@ add_folder_game(NgSource *source, const NgConfig *cfg, const char *source_name,
     }
 
     if (!game.pic0_file[0]) {
-        child_path(pic1_path, sizeof(pic1_path), path, "sce_sys/pic1.png");
+        relative_path(pic1_path, sizeof(pic1_path), path, "sce_sys/pic1.png");
         if (art_path(game.pic1_file, sizeof(game.pic1_file), cfg, game.id, "pic1.png") != 0) {
             game.pic1_file[0] = '\0';
         }
@@ -805,9 +818,8 @@ scanner_main(void *arg)
         int transfer_busy = 0;
         uint64_t finished;
         time_t now;
-        struct timespec ts = {1, 0};
 
-        nanosleep(&ts, NULL);
+        ng_app_wait_scan_signal(1000);
         if (scanner_stop) break;
         ng_app_config_snapshot(cfg);
         pthread_mutex_lock(&ng_app()->lock);
@@ -853,6 +865,7 @@ ng_scanner_stop(void)
 {
     if (!scanner_running) return;
     scanner_stop = 1;
+    ng_app_wake_scanner();
     pthread_join(scanner_thread, NULL);
     scanner_running = 0;
 }

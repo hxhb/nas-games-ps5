@@ -2,7 +2,7 @@
 
 Game Center 是一个 PS5 Homebrew payload。它在 PS5 上运行本地 Web 服务，从 SMB、FTP 和本机目录扫描游戏，并通过适合电视和手柄操作的海报墙查看、安装、启动和管理资源。
 
-[下载最新版本](https://github.com/hxhb/nas-games-ps5/releases/latest) · [开发与构建](docs/development.md)
+[下载最新版本](https://github.com/hxhb/game-center-ps5/releases/latest) · [开发与构建](docs/development.md)
 
 ![Game Center 游戏库。使用演示数据展示已安装和未安装的游戏](docs/screenshots/library.png)
 
@@ -19,7 +19,7 @@ Game Center 是一个 PS5 Homebrew payload。它在 PS5 上运行本地 Web 服�
 
 ## 安装与使用
 
-1. 在能运行 PS5 Homebrew payload 的主机上启动 [Payload Manager](https://github.com/itsPLK/ps5-payload-manager)。从 [Release 页面](https://github.com/hxhb/nas-games-ps5/releases/latest) 下载 `nasgames.elf`。
+1. 在能运行 PS5 Homebrew payload 的主机上启动 [Payload Manager](https://github.com/itsPLK/ps5-payload-manager)。从 [Release 页面](https://github.com/hxhb/game-center-ps5/releases/latest) 下载 `nasgames.elf`。
 2. 在 Payload Manager 上传并运行 `nasgames.elf`。需要随 Payload Manager 启动时，将 `local/nasgames` 加入 Autoload。
 3. 在 PS5「媒体」中打开「Game Center」，或在同一局域网的浏览器打开 `http://<PS5-IP>:8098/`。
 4. 打开「设置 → 连接」，添加来源并测试连接。选择扫描目录后保存，等待游戏出现在库中。
@@ -37,7 +37,7 @@ Game Center 是一个 PS5 Homebrew payload。它在 PS5 上运行本地 Web 服�
 
 详情显示来源大小和目标盘可用空间。PKG 的安装占用由系统决定，可能超过包文件大小。PKG 的取消和文件夹的主界面注册依赖固件提供的接口。最近任务保留到 payload 重启，也可在传输面板手动清除。
 
-Web 服务在受信任的局域网使用，当前 API 无登录认证。配置和封面缓存在主机的 `/data/nasgames`。
+Web 服务通过反向代理访问时支持 HTTPS 外部域名下的安装、设置和启动操作；代理需原样转发 `X-Game-Center-Request` 请求头。当前 API 本身没有登录认证，如需暴露到局域网外，必须在反向代理层启用 HTTPS 和访问认证。配置和封面缓存在主机的 `/data/nasgames`。
 
 为兼容已有 Autoload、安装槽位和配置，发行文件仍命名为 `nasgames.elf`，Payload Manager 槽位仍为 `local/nasgames`。
 

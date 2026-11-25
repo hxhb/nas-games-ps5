@@ -154,6 +154,10 @@ typedef struct {
     char range[256];
     char host[384];
     char origin[400];
+    char forwarded_proto[16];
+    char forwarded_host[384];
+    char if_none_match[64];
+    int client_request;
     int json_content;
     int cross_site;
     char *body;
@@ -243,9 +247,19 @@ respond_text(HttpResponse *resp, int code, const char *reason, const char *text)
 }
 
 static int
+respond_json(HttpResponse *resp, int code, const char *reason, const char *json)
+{
+    return respond_buffer(resp, code, reason, "application/json; charset=utf-8",
+                          "Cache-Control: no-store\r\n", json, strlen(json));
+}
+
+static int
 respond_json_sb(HttpResponse *resp, int code, const char *reason, NgStrBuf *sb)
 {
-    if (sb->failed) return respond_text(resp, 500, "Internal Server Error", "无法构造响应");
+    if (sb->failed) {
+        return respond_json(resp, 500, "Internal Server Error",
+                            "{\"ok\":false,\"error\":\"无法构造响应\"}");
+    }
     return respond_buffer(resp, code, reason, "application/json; charset=utf-8",
                           "Cache-Control: no-store\r\n", sb->data, sb->len);
 }
@@ -321,7 +335,7 @@ read_http_request(int fd, HttpRequest *req)
         n = recv(fd, buffer + used, HTTP_MAX_HEADER - used, 0);
         if (n < 0) {
             if (errno == EINTR) continue;
-            return -1;
+            return used == 0 ? 1 : -1;
         }
         if (n == 0) break;
         used += (size_t)n;
@@ -329,6 +343,7 @@ read_http_request(int fd, HttpRequest *req)
         header_end = strstr(buffer, "\r\n\r\n");
         if (header_end) break;
     }
+    if (used == 0) return 1;
     if (!header_end) return -1;
     header_len = (size_t)(header_end - buffer) + 4;
     line_end = strstr(buffer, "\r\n");
@@ -384,6 +399,32 @@ read_http_request(int fd, HttpRequest *req)
             if (req->host[0] || parse_header_value(header + 5, len - 5, req->host, sizeof(req->host)) != 0) return -1;
         } else if (len >= 7 && !strncasecmp(header, "Origin:", 7)) {
             if (req->origin[0] || parse_header_value(header + 7, len - 7, req->origin, sizeof(req->origin)) != 0) return -1;
+        } else if (len >= 18 && !strncasecmp(header, "X-Forwarded-Proto:", 18)) {
+            char value[64];
+            if (parse_header_value(header + 18, len - 18, value, sizeof(value)) == 0) {
+                char *comma = strchr(value, ',');
+                if (comma) *comma = '\0';
+                ng_trim(value);
+                ng_strlcpy(req->forwarded_proto, value, sizeof(req->forwarded_proto));
+            }
+        } else if (len >= 17 && !strncasecmp(header, "X-Forwarded-Host:", 17)) {
+            char value[384];
+            if (parse_header_value(header + 17, len - 17, value, sizeof(value)) == 0) {
+                char *comma = strchr(value, ',');
+                if (comma) *comma = '\0';
+                ng_trim(value);
+                ng_strlcpy(req->forwarded_host, value, sizeof(req->forwarded_host));
+            }
+        } else if (len >= 14 && !strncasecmp(header, "If-None-Match:", 14)) {
+            parse_header_value(header + 14, len - 14, req->if_none_match, sizeof(req->if_none_match));
+        } else if (len >= (sizeof("X-Game-Center-Request:") - 1) &&
+                   !strncasecmp(header, "X-Game-Center-Request:",
+                                sizeof("X-Game-Center-Request:") - 1)) {
+            char value[16];
+            if (parse_header_value(header + sizeof("X-Game-Center-Request:") - 1,
+                                   len - (sizeof("X-Game-Center-Request:") - 1),
+                                   value, sizeof(value)) != 0) return -1;
+            req->client_request = !strcmp(value, "1");
         } else if (len >= 13 && !strncasecmp(header, "Content-Type:", 13)) {
             char value[160];
             if (parse_header_value(header + 13, len - 13, value, sizeof(value)) != 0) return -1;
@@ -398,9 +439,23 @@ read_http_request(int fd, HttpRequest *req)
         header = end + 2;
     }
     if (req->origin[0]) {
-        char expected[sizeof(req->origin)];
-        snprintf(expected, sizeof(expected), "http://%s", req->host);
-        req->cross_site = strcasecmp(req->origin, expected) != 0;
+        char expected[sizeof(req->forwarded_proto) + sizeof(req->forwarded_host) + 8];
+        int same_origin = 0;
+        if (req->host[0]) {
+            snprintf(expected, sizeof(expected), "http://%s", req->host);
+            if (!strcasecmp(req->origin, expected)) same_origin = 1;
+        }
+        if (!same_origin && req->forwarded_proto[0] &&
+            (!strcasecmp(req->forwarded_proto, "http") ||
+             !strcasecmp(req->forwarded_proto, "https"))) {
+            const char *public_host = req->forwarded_host[0] ? req->forwarded_host : req->host;
+            if (public_host[0]) {
+                snprintf(expected, sizeof(expected), "%s://%s",
+                         req->forwarded_proto, public_host);
+                if (!strcasecmp(req->origin, expected)) same_origin = 1;
+            }
+        }
+        req->cross_site = !same_origin;
     }
     if (content_length) {
         size_t already = used > header_len ? used - header_len : 0;
@@ -469,14 +524,11 @@ static int
 parse_draft_source(const char *body, NgSourceConfig *source,
                    char *error, size_t error_size)
 {
-    NgConfig base;
-
     if (!body || !body[0]) {
         snprintf(error, error_size, "缺少连接参数");
         return -1;
     }
-    ng_app_config_snapshot(&base);
-    return ng_config_source_from_json(body, &base, source, error, error_size);
+    return ng_app_parse_source_json(body, source, error, error_size);
 }
 
 static int
@@ -570,7 +622,7 @@ handle_settings_put(const HttpRequest *req, HttpResponse *resp)
     int rc = ng_app_apply_config(req->body, error, sizeof(error));
     if (rc > 0) return json_error_response(resp, 400, "Bad Request", error);
     if (rc < 0) return json_error_response(resp, 500, "Internal Server Error", error);
-    return respond_text(resp, 200, "OK", "{\"ok\":true}");
+    return respond_json(resp, 200, "OK", "{\"ok\":true}");
 }
 
 static int
@@ -829,21 +881,59 @@ static int
 handle_history_clear(HttpResponse *resp)
 {
     ng_app_job_history_clear();
-    return respond_text(resp, 200, "OK", "{\"ok\":true}");
+    return respond_json(resp, 200, "OK", "{\"ok\":true}");
 }
 
 static int
-handle_state(HttpResponse *resp)
+handle_close_ui(HttpResponse *resp)
+{
+    char message[NG_ERROR_LEN];
+    NgStrBuf sb;
+    int rc = ng_title_launcher_close_web_ui(message, sizeof(message));
+
+    if (rc < 0) {
+        return json_error_response(resp, 500, "Internal Server Error", message);
+    }
+    ng_strbuf_init(&sb);
+    ng_strbuf_printf(&sb, "{\"ok\":true,\"closed\":%s,\"message\":",
+                     rc == 0 ? "true" : "false");
+    ng_strbuf_json_string(&sb, message);
+    ng_strbuf_append(&sb, "}");
+    rc = respond_json_sb(resp, 200, "OK", &sb);
+    ng_strbuf_free(&sb);
+    return rc;
+}
+
+static int
+handle_state(const HttpRequest *req, HttpResponse *resp)
 {
     NgStrBuf sb;
+    char *rev_param = query_get(req->query, "catalogRevision");
+    char *instance_param = query_get(req->query, "instance");
+    int has_revision = 0;
+    uint64_t known_revision = 0;
     int rc;
+
+    if (rev_param && isdigit((unsigned char)rev_param[0])) {
+        char *end = NULL;
+        errno = 0;
+        unsigned long long parsed = strtoull(rev_param, &end, 10);
+        if (!errno && end && *end == '\0') {
+            known_revision = (uint64_t)parsed;
+            has_revision = 1;
+        }
+    }
     ng_strbuf_init(&sb);
-    if (ng_app_state_json(&sb) != 0) {
+    if (ng_app_state_json_since(&sb, has_revision, known_revision, instance_param) != 0) {
         ng_strbuf_free(&sb);
+        free(rev_param);
+        free(instance_param);
         return json_error_response(resp, 500, "Internal Server Error", "构造状态失败");
     }
     rc = respond_json_sb(resp, 200, "OK", &sb);
     ng_strbuf_free(&sb);
+    free(rev_param);
+    free(instance_param);
     return rc;
 }
 
@@ -1002,9 +1092,12 @@ send_local_file(HttpResponse *resp, const char *path, const char *content_type,
         return -1;
     }
     if (!resp->head_only) {
-        char buf[131072];
+        char fallback[8192];
+        char *heap_buf = malloc(65536);
+        char *buf = heap_buf ? heap_buf : fallback;
+        size_t buf_size = heap_buf ? 65536 : sizeof(fallback);
         while (1) {
-            ssize_t n = read(fd, buf, sizeof(buf));
+            ssize_t n = read(fd, buf, buf_size);
             if (n < 0) {
                 if (errno == EINTR) continue;
                 break;
@@ -1012,6 +1105,7 @@ send_local_file(HttpResponse *resp, const char *path, const char *content_type,
             if (n == 0) break;
             if (send_all(resp->fd, buf, (size_t)n) != 0) break;
         }
+        free(heap_buf);
     }
     close(fd);
     return 0;
@@ -1171,10 +1265,12 @@ handle_stream(const HttpRequest *req, HttpResponse *resp)
 static int
 handle_api(const HttpRequest *req, HttpResponse *resp)
 {
-    if (strcmp(req->method, "GET") && strcmp(req->method, "HEAD") && req->cross_site) {
-        return json_error_response(resp, 403, "Forbidden", "此操作需要同源请求");
+    if (strcmp(req->method, "GET") && strcmp(req->method, "HEAD") &&
+        req->cross_site && !req->client_request) {
+        return json_error_response(resp, 403, "Forbidden",
+                                   "请求来源校验失败，请刷新页面；反向代理需转发 X-Game-Center-Request");
     }
-    if (!strcmp(req->path, "/api/state")) return handle_state(resp);
+    if (!strcmp(req->path, "/api/state")) return handle_state(req, resp);
     if (!strcmp(req->path, "/api/game-size")) return handle_game_size(req, resp);
     if (!strcmp(req->path, "/api/settings")) {
         if (!strcmp(req->method, "GET")) return handle_settings_get(resp);
@@ -1201,11 +1297,15 @@ handle_api(const HttpRequest *req, HttpResponse *resp)
         !strcmp(req->method, "POST")) {
         return handle_history_clear(resp);
     }
+    if (!strcmp(req->path, "/api/close-ui") &&
+        !strcmp(req->method, "POST")) {
+        return handle_close_ui(resp);
+    }
     if (!strcmp(req->path, "/api/scan") && !strcmp(req->method, "POST")) {
         char response[80];
         snprintf(response, sizeof(response), "{\"ok\":true,\"sequence\":%llu}",
                  (unsigned long long)ng_app_request_scan());
-        return respond_text(resp, 202, "Accepted", response);
+        return respond_json(resp, 202, "Accepted", response);
     }
     if (!strcmp(req->path, "/api/shutdown") && !strcmp(req->method, "POST")) {
         if (!req->json_content) {
@@ -1214,11 +1314,11 @@ handle_api(const HttpRequest *req, HttpResponse *resp)
         if (ng_installer_prepare_stop() != 0) {
             return json_error_response(resp, 409, "Conflict", "有安装任务运行或排队，请稍后更新");
         }
-        return respond_text(resp, 202, "Accepted", "{\"ok\":true}");
+        return respond_json(resp, 202, "Accepted", "{\"ok\":true}");
     }
     if (!strcmp(req->path, "/api/log")) return handle_log(resp);
     if (!strcmp(req->path, "/api/health")) {
-        return respond_text(resp, 200, "OK", "{\"ok\":true,\"version\":\"" NG_VERSION "\"}");
+        return respond_json(resp, 200, "OK", "{\"ok\":true,\"version\":\"" NG_VERSION "\"}");
     }
     return json_error_response(resp, 404, "Not Found", "接口不存在");
 }
@@ -1239,8 +1339,30 @@ handle_static(const HttpRequest *req, HttpResponse *resp)
     if (!wanted) return respond_text(resp, 404, "Not Found", "Not found");
     for (size_t i = 0; i < ng_ui_asset_count; i++) {
         if (!strcmp(ng_ui_assets[i].name, wanted)) {
+            if (!strcmp(wanted, "/index.html")) {
+                return respond_buffer(resp, 200, "OK", ng_ui_assets[i].content_type,
+                                      "Cache-Control: no-store, max-age=0\r\n",
+                                      ng_ui_assets[i].data, ng_ui_assets[i].size);
+            }
+            char etag[48];
+            char extra[192];
+            char *ver = query_get(req->query, "v");
+            int versioned = ver && !strcmp(ver, NG_VERSION);
+            free(ver);
+            snprintf(etag, sizeof(etag), "\"gc-%s\"", NG_VERSION);
+            snprintf(extra, sizeof(extra),
+                     "Cache-Control: %s\r\nETag: %s\r\n",
+                     versioned ? "public, max-age=31536000, immutable" : "no-cache",
+                     etag);
+            if (req->if_none_match[0] &&
+                (!strcmp(req->if_none_match, etag) ||
+                 (!strncmp(req->if_none_match, "W/", 2) &&
+                  !strcmp(req->if_none_match + 2, etag)))) {
+                return send_header(resp, 304, "Not Modified",
+                                   ng_ui_assets[i].content_type, 1, 0, extra);
+            }
             return respond_buffer(resp, 200, "OK", ng_ui_assets[i].content_type,
-                                  "Cache-Control: no-store, max-age=0\r\n",
+                                  extra,
                                   ng_ui_assets[i].data, ng_ui_assets[i].size);
         }
     }
@@ -1269,9 +1391,12 @@ connection_main(void *arg)
 #endif
     memset(&resp, 0, sizeof(resp));
     resp.fd = fd;
-    if (read_http_request(fd, &req) != 0) {
-        resp.head_only = 0;
-        respond_text(&resp, 400, "Bad Request", "Bad request");
+    int read_rc = read_http_request(fd, &req);
+    if (read_rc != 0) {
+        if (read_rc < 0) {
+            resp.head_only = 0;
+            respond_text(&resp, 400, "Bad Request", "Bad request");
+        }
         goto done;
     }
     resp.head_only = !strcmp(req.method, "HEAD");
@@ -1305,7 +1430,7 @@ http_main(void *arg)
     pthread_attr_t attr;
     int attr_ready = pthread_attr_init(&attr) == 0;
 
-    if (attr_ready) pthread_attr_setstacksize(&attr, 1024u * 1024u);
+    if (attr_ready) pthread_attr_setstacksize(&attr, 512u * 1024u);
     while (!http_stop) {
         struct pollfd pfd = {listen_fd, POLLIN, 0};
         int rc = poll(&pfd, 1, 500);

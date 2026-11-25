@@ -59,6 +59,7 @@ struct SmbFile {
     uint64_t size;
     uint64_t read_offset;
     uint64_t next_submit;
+    uint64_t read_limit;
     uint64_t bytes_read;
     uint64_t opened_ms;
     uint64_t reads_submitted;
@@ -318,14 +319,19 @@ smb_pipeline_read(SmbFile *file, NgSource *source, void *buf, size_t size)
     size_t done = 0;
     uint64_t remaining = file->size - file->read_offset;
     uint64_t end = file->read_offset + (remaining < size ? remaining : size);
+    uint64_t fill_end = end;
+
+    if (file->read_limit > fill_end && file->read_limit <= file->size) {
+        fill_end = file->read_limit;
+    }
 
     while (done < size) {
         size_t slot;
         size_t available;
         size_t take;
 
-        if (file->count < file->window && file->next_submit < end) {
-            if (smb_pipeline_fill(file, source, end) != 0) {
+        if (file->count < file->window && file->next_submit < fill_end) {
+            if (smb_pipeline_fill(file, source, fill_end) != 0) {
                 return done ? (ssize_t)done : -1;
             }
         }
@@ -360,6 +366,10 @@ smb_pipeline_read(SmbFile *file, NgSource *source, void *buf, size_t size)
             file->count--;
         }
         if (file->pipeline_failed) break;
+    }
+    if (!file->pipeline_failed && file->read_limit > file->next_submit &&
+        file->count < file->window) {
+        smb_pipeline_fill(file, source, fill_end);
     }
     return (ssize_t)done;
 }
@@ -793,8 +803,23 @@ smb_file_seek(NgSource *source, void *handle, uint64_t offset)
     }
     if (file->inflight > 0 && smb_pipeline_drain(file, source) != 0) return -1;
     file->pipeline_failed = 0;
+    file->read_limit = 0;
     smb_pipeline_reset(file, offset);
     return 0;
+}
+
+static void
+smb_file_set_read_limit(NgSource *source, void *handle, uint64_t limit)
+{
+    SmbFile *file = handle;
+    (void)source;
+
+    if (!limit || file->read_offset >= file->size) {
+        file->read_limit = 0;
+        return;
+    }
+    uint64_t remaining = file->size - file->read_offset;
+    file->read_limit = file->read_offset + (limit < remaining ? limit : remaining);
 }
 
 static void
@@ -969,6 +994,7 @@ static const NgSourceOps smb_ops = {
     .file_open = smb_file_open,
     .file_read = smb_file_read,
     .file_seek = smb_file_seek,
+    .file_set_read_limit = smb_file_set_read_limit,
     .file_close = smb_file_close,
 };
 

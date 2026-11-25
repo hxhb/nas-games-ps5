@@ -151,7 +151,9 @@ ng_prefetch_create(NgSourceFile *file, uint64_t limit)
             return prefetch;
         }
     }
+    ng_source_file_set_read_limit(file, limit);
     if (pthread_create(&prefetch->thread, NULL, prefetch_main, prefetch) != 0) {
+        ng_source_file_set_read_limit(file, 0);
         ng_log_info("无法创建预读线程，%s 使用直接读取", "当前文件");
         return prefetch;
     }
@@ -217,6 +219,7 @@ ng_prefetch_destroy(NgPrefetcher *prefetch)
         pthread_cond_broadcast(&prefetch->ready);
         pthread_mutex_unlock(&prefetch->lock);
         pthread_join(prefetch->thread, NULL);
+        ng_source_file_set_read_limit(prefetch->file, 0);
     }
     for (size_t i = 0; i < NG_PREFETCH_SLOT_COUNT; i++) {
         free(prefetch->slots[i].data);

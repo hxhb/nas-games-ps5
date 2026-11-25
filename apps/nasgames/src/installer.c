@@ -123,10 +123,11 @@ ensure_dir(const char *path)
 }
 
 static void
-remove_tree_local(const char *path)
+remove_tree_local_depth(const char *path, int depth)
 {
     struct stat st;
 
+    if (depth > 64) return;
     if (lstat(path, &st) != 0) return;
     if (S_ISDIR(st.st_mode) && !S_ISLNK(st.st_mode)) {
         DIR *dir = opendir(path);
@@ -137,7 +138,7 @@ remove_tree_local(const char *path)
                 if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
                 if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) <
                     (int)sizeof(child)) {
-                    remove_tree_local(child);
+                    remove_tree_local_depth(child, depth + 1);
                 }
             }
             closedir(dir);
@@ -148,12 +149,22 @@ remove_tree_local(const char *path)
     }
 }
 
+static void
+remove_tree_local(const char *path)
+{
+    remove_tree_local_depth(path, 0);
+}
+
 static int
-set_install_permissions(const char *path)
+set_install_permissions_depth(const char *path, int depth)
 {
     struct stat st;
     int rc = 0;
 
+    if (depth > 64) {
+        errno = ELOOP;
+        return -1;
+    }
     if (lstat(path, &st) != 0) return -1;
     if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) return 0;
     if (chmod(path, 0777) != 0) return -1;
@@ -172,7 +183,7 @@ set_install_permissions(const char *path)
             rc = -1;
             break;
         }
-        if (set_install_permissions(child) != 0) {
+        if (set_install_permissions_depth(child, depth + 1) != 0) {
             rc = -1;
             break;
         }
@@ -181,6 +192,12 @@ set_install_permissions(const char *path)
     closedir(dir);
     errno = error;
     return rc;
+}
+
+static int
+set_install_permissions(const char *path)
+{
+    return set_install_permissions_depth(path, 0);
 }
 
 static int
@@ -214,35 +231,28 @@ has_title_metadata(const char *root)
     return 0;
 }
 
-static int
-valid_tid(const char *tid)
-{
-    if (!tid || strlen(tid) != 9) return 0;
-    for (int i = 0; i < 4; i++) {
-        if (tid[i] < 'A' || tid[i] > 'Z') return 0;
-    }
-    for (int i = 4; i < 9; i++) {
-        if (tid[i] < '0' || tid[i] > '9') return 0;
-    }
-    return strncmp(tid, "NPXS", 4) != 0;
-}
-
 #ifdef __PROSPERO__
 static int
 copy_file_fd(const char *src, const char *dst, mode_t mode)
 {
     int in = -1;
     int out = -1;
-    char buf[131072];
+    char fallback[8192];
+    char *heap_buf = malloc(65536);
+    char *buf = heap_buf ? heap_buf : fallback;
+    size_t buf_size = heap_buf ? 65536 : sizeof(fallback);
     int rc = -1;
 
     in = open(src, O_RDONLY);
-    if (in < 0) return -1;
+    if (in < 0) {
+        free(heap_buf);
+        return -1;
+    }
     if (ng_ensure_parent_dir(dst, 0777) != 0) goto done;
     out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, mode);
     if (out < 0) goto done;
     while (1) {
-        ssize_t n = read(in, buf, sizeof(buf));
+        ssize_t n = read(in, buf, buf_size);
         if (n < 0) {
             if (errno == EINTR) continue;
             goto done;
@@ -265,6 +275,7 @@ copy_file_fd(const char *src, const char *dst, mode_t mode)
 done:
     if (out >= 0 && close(out) != 0) rc = -1;
     if (in >= 0) close(in);
+    free(heap_buf);
     if (rc == 0) chmod(dst, mode);
     return rc;
 }
@@ -934,7 +945,7 @@ ps5_install_pkg(const NgGame *game, char *error, size_t error_size)
         return INSTALL_CANCELED;
     }
     snprintf(uri, sizeof(uri), "http://127.0.0.1:%d/stream/%s",
-             ng_app()->actual_port, game->id);
+             ng_app_server_port(), game->id);
     metadata.uri = uri;
     metadata.ex_uri = "";
     metadata.playgo_scenario_id = "";
@@ -1025,105 +1036,190 @@ ps5_install_pkg(const NgGame *game, char *error, size_t error_size)
 
 static int
 copy_remote_file(NgSource *source, const char *remote, const char *local,
-                 uint64_t *bytes_done, uint64_t bytes_total, uint64_t expected_size)
+                 uint64_t *bytes_done, uint64_t bytes_total, uint64_t expected_size,
+                 uint64_t *unsynced_bytes)
 {
-    NgSourceFile *file;
+    enum { COPY_READ_RETRIES = 3 };
+    enum {
+        SYNC_FILE_MIN_BYTES = 4u * 1024u * 1024u,
+        SYNC_BATCH_BYTES = 64u * 1024u * 1024u,
+    };
+    NgSourceFile *file = NULL;
     NgPrefetcher *prefetch = NULL;
     uint8_t *buf = NULL;
     size_t buf_size = 0;
-    int out;
+    int out = -1;
     int rc = 0;
     uint64_t last_update = 0;
-    int fd_open = 0;
-    int prefetch_active;
+    uint64_t file_done = 0;
+    int retries = 0;
 
-    file = ng_source_open_file(source, remote);
-    if (!file) {
-        ng_log_error("安装文件打开失败: %s", remote);
-        return -1;
-    }
     if (ng_ensure_parent_dir(local, 0777) != 0) {
-        ng_source_file_close(file);
         return -1;
     }
     out = open(local, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (out < 0) {
-        ng_source_file_close(file);
         return -1;
     }
-    fd_open = 1;
-    prefetch = ng_prefetch_create(file, file->size);
-    prefetch_active = ng_prefetch_is_active(prefetch);
-    if (!prefetch_active) {
-        buf_size = ng_prefetch_chunk_size(prefetch);
-        buf = malloc(buf_size);
-        if (!buf) {
-            rc = -1;
-            goto done;
-        }
-    }
-    while (1) {
-        const void *data = NULL;
-        ssize_t n;
 
-        if (install_cancel_requested()) {
-            rc = INSTALL_CANCELED;
+    for (;;) {
+        int prefetch_active = 0;
+        int read_failed = 0;
+
+        file = ng_source_open_file(source, remote);
+        if (!file) {
+            if (retries < COPY_READ_RETRIES && !install_cancel_requested()) {
+                retries++;
+                ng_log_error("安装文件重新打开失败，将从 %llu 字节处重试（%d/%d）: %s",
+                             (unsigned long long)file_done, retries,
+                             COPY_READ_RETRIES, remote);
+                ng_source_reset_connection(source);
+                usleep((useconds_t)retries * 500000u);
+                continue;
+            }
+            ng_log_error("安装文件打开失败: %s", remote);
+            rc = -1;
             break;
         }
-        if (prefetch_active) {
-            n = ng_prefetch_peek(prefetch, &data);
-        } else {
-            n = ng_source_file_read(file, buf, buf_size);
-            data = buf;
-        }
-        if (n < 0) {
-            ng_log_error("安装文件读取失败: %s，偏移 %llu，累计写入 %llu",
-                         remote, (unsigned long long)file->offset,
-                         (unsigned long long)*bytes_done);
-            rc = install_cancel_requested() ? INSTALL_CANCELED : -1;
+
+        if ((expected_size > 0 && file->size != expected_size) ||
+            file_done > file->size) {
+            ng_source_set_error(source, "远端文件在传输期间发生变化");
+            ng_source_file_close(file);
+            file = NULL;
+            rc = -1;
             break;
         }
-        if (n == 0) break;
-        if (install_cancel_requested()) {
-            rc = INSTALL_CANCELED;
-            break;
-        }
-        const uint8_t *p = data;
-        ssize_t left = n;
-        while (left > 0) {
-            ssize_t w = write(out, p, (size_t)left);
-            if (w <= 0) {
-                if (w < 0 && errno == EINTR) continue;
-                if (w == 0) errno = EIO;
+        if (file_done > 0) {
+            int seek_failed = ng_source_file_seek(file, file_done) != 0;
+            if (!seek_failed && lseek(out, (off_t)file_done, SEEK_SET) < 0) {
+                seek_failed = 1;
+            }
+            if (seek_failed) {
+                ng_source_file_close(file);
+                file = NULL;
+                if (retries < COPY_READ_RETRIES && !install_cancel_requested()) {
+                    retries++;
+                    ng_log_error("安装文件续传定位失败，将从 %llu 字节处重试（%d/%d）: %s",
+                                 (unsigned long long)file_done, retries,
+                                 COPY_READ_RETRIES, remote);
+                    ng_source_reset_connection(source);
+                    usleep((useconds_t)retries * 500000u);
+                    continue;
+                }
                 rc = -1;
                 break;
             }
-            p += w;
-            left -= w;
         }
-        if (rc != 0) break;
-        if (prefetch_active) ng_prefetch_advance(prefetch, (size_t)n);
-        *bytes_done += (uint64_t)n;
-        {
-            uint64_t now = ng_now_monotonic_ms();
-            if (now - last_update >= 250) {
-                int progress = bytes_total ? (int)((*bytes_done * 100) / bytes_total) : -1;
-                if (progress > 99) progress = 99;
-                ng_app_job_update("安装文件", ng_path_basename(remote), progress,
-                                  *bytes_done, bytes_total);
-                last_update = now;
+
+        prefetch = ng_prefetch_create(file, file->size - file_done);
+        prefetch_active = ng_prefetch_is_active(prefetch);
+        if (!prefetch_active && !buf) {
+            buf_size = ng_prefetch_chunk_size(prefetch);
+            buf = malloc(buf_size);
+            if (!buf) {
+                rc = -1;
+                break;
             }
         }
+
+        while (1) {
+            const void *data = NULL;
+            ssize_t n;
+
+            if (install_cancel_requested()) {
+                rc = INSTALL_CANCELED;
+                break;
+            }
+            if (prefetch_active) {
+                n = ng_prefetch_peek(prefetch, &data);
+            } else {
+                n = ng_source_file_read(file, buf, buf_size);
+                data = buf;
+            }
+            if (n < 0) {
+                ng_log_error("安装文件读取失败: %s，已写入 %llu，远端偏移 %llu",
+                             remote, (unsigned long long)file_done,
+                             (unsigned long long)file->offset);
+                read_failed = 1;
+                break;
+            }
+            if (n == 0) break;
+            if (install_cancel_requested()) {
+                rc = INSTALL_CANCELED;
+                break;
+            }
+            const uint8_t *p = data;
+            ssize_t left = n;
+            while (left > 0) {
+                ssize_t w = write(out, p, (size_t)left);
+                if (w <= 0) {
+                    if (w < 0 && errno == EINTR) continue;
+                    if (w == 0) errno = EIO;
+                    rc = -1;
+                    break;
+                }
+                p += w;
+                left -= w;
+            }
+            if (rc != 0) break;
+            if (prefetch_active) ng_prefetch_advance(prefetch, (size_t)n);
+            file_done += (uint64_t)n;
+            *bytes_done += (uint64_t)n;
+            {
+                uint64_t now = ng_now_monotonic_ms();
+                if (now - last_update >= 250) {
+                    int progress = bytes_total ? (int)((*bytes_done * 100) / bytes_total) : -1;
+                    if (progress > 99) progress = 99;
+                    ng_app_job_update("安装文件", ng_path_basename(remote), progress,
+                                      *bytes_done, bytes_total);
+                    last_update = now;
+                }
+            }
+        }
+
+        if (prefetch) {
+            ng_prefetch_destroy(prefetch);
+            prefetch = NULL;
+        }
+        ng_source_file_close(file);
+        file = NULL;
+
+        if (rc == INSTALL_CANCELED) break;
+        if (rc != 0) {
+            rc = -1;
+            break;
+        }
+        if (read_failed) {
+            if (retries < COPY_READ_RETRIES && !install_cancel_requested()) {
+                retries++;
+                ng_log_error("安装文件读取中断，将从 %llu 字节处重试（%d/%d）: %s",
+                             (unsigned long long)file_done, retries,
+                             COPY_READ_RETRIES, remote);
+                ng_source_reset_connection(source);
+                usleep((useconds_t)retries * 500000u);
+                continue;
+            }
+            rc = install_cancel_requested() ? INSTALL_CANCELED : -1;
+            break;
+        }
+        break;
     }
-    if (rc == 0 && fsync(out) != 0) rc = -1;
-done:
+
     if (prefetch) ng_prefetch_destroy(prefetch);
     free(buf);
-    if (fd_open) {
+    if (file) ng_source_file_close(file);
+    if (out >= 0) {
+        if (rc == 0) {
+            if (unsynced_bytes) *unsynced_bytes += file_done;
+            if (file_done >= SYNC_FILE_MIN_BYTES ||
+                (unsynced_bytes && *unsynced_bytes >= SYNC_BATCH_BYTES)) {
+                if (fsync(out) != 0) rc = -1;
+                else if (unsynced_bytes) *unsynced_bytes = 0;
+            }
+        }
         if (close(out) != 0 && rc == 0) rc = -1;
-        fd_open = 0;
     }
-    ng_source_file_close(file);
     if (rc == 0) {
         int progress = bytes_total ? (int)((*bytes_done * 100) / bytes_total) : -1;
         if (progress > 99) progress = 99;
@@ -1131,16 +1227,15 @@ done:
                           *bytes_done, bytes_total);
     }
     if (rc == 0 && expected_size > 0) {
-        struct stat st;
-        if (stat(local, &st) != 0 || (uint64_t)st.st_size != expected_size) rc = -1;
+        if (file_done != expected_size) rc = -1;
     }
-    if (rc == 0) chmod(local, 0666);
     return rc;
 }
 
 static int
 copy_remote_tree(NgSource *source, const char *remote, const char *local,
-                 int depth, uint64_t *bytes_done, uint64_t bytes_total)
+                 int depth, uint64_t *bytes_done, uint64_t bytes_total,
+                 uint64_t *unsynced_bytes)
 {
     NgSourceList list;
     int rc = 0;
@@ -1168,10 +1263,10 @@ copy_remote_tree(NgSource *source, const char *remote, const char *local,
         }
         if (list.items[i].is_dir) {
             copied = copy_remote_tree(source, rpath, lpath, depth + 1,
-                                      bytes_done, bytes_total);
+                                      bytes_done, bytes_total, unsynced_bytes);
         } else {
             copied = copy_remote_file(source, rpath, lpath, bytes_done, bytes_total,
-                                      list.items[i].size);
+                                      list.items[i].size, unsynced_bytes);
         }
         if (copied != 0) rc = copied;
         if (rc != 0) break;
@@ -1184,18 +1279,19 @@ static int
 install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
                char *error, size_t error_size)
 {
-    NgConfig cfg;
+    char data_dir[NG_PATH_LEN];
     char root[NG_PATH_LEN];
     char dest[NG_PATH_LEN];
     char staging[NG_PATH_LEN];
     char check[NG_PATH_LEN];
     uint64_t total = 0;
     uint64_t done = 0;
+    uint64_t unsynced = 0;
     int result = -1;
     int staging_created = 0;
     NgStorageInfo storage;
 
-    if (!valid_tid(game->title_id)) {
+    if (!ng_valid_title_id(game->title_id)) {
         snprintf(error, error_size, "文件夹游戏标题 ID 无效");
         return -1;
     }
@@ -1208,14 +1304,14 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
         snprintf(error, error_size, "不支持的文件夹安装目标");
         return -1;
     }
-    ng_app_config_snapshot(&cfg);
+    ng_app_data_dir_snapshot(data_dir, sizeof(data_dir));
     if (install_cancel_requested()) {
         snprintf(error, error_size, "安装已取消");
         result = INSTALL_CANCELED;
         goto out;
     }
     if (target == NG_INSTALL_LIBRARY) {
-        if (ng_path_join_local(root, sizeof(root), cfg.data_dir, "library") != 0) {
+        if (ng_path_join_local(root, sizeof(root), data_dir, "library") != 0) {
             snprintf(error, error_size, "本地库路径过长");
             goto out;
         }
@@ -1302,7 +1398,7 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
                       0, 0, total);
     staging_created = 1;
     {
-        int copied = copy_remote_tree(source, game->path, staging, 0, &done, total);
+        int copied = copy_remote_tree(source, game->path, staging, 0, &done, total, &unsynced);
         if (copied == INSTALL_CANCELED) {
             snprintf(error, error_size, "安装已取消");
             result = INSTALL_CANCELED;
@@ -1349,6 +1445,13 @@ install_folder(const NgGame *game, NgSource *source, NgInstallTarget target,
         snprintf(error, error_size, "无法提交导入目录: %s", strerror(errno));
         result = -1;
         goto out;
+    }
+    {
+        int root_fd = open(root, O_RDONLY | O_DIRECTORY);
+        if (root_fd >= 0) {
+            fsync(root_fd);
+            close(root_fd);
+        }
     }
     staging_created = 0;
     if (target == NG_INSTALL_LIBRARY) {
@@ -1523,11 +1626,7 @@ ng_installer_start(const NgGame *game, NgSource *source, NgInstallTarget target,
     task->game = *game;
     task->source = source;
     task->target = target;
-    {
-        NgConfig config;
-        ng_app_config_snapshot(&config);
-        task->keep_awake = config.keep_awake;
-    }
+    task->keep_awake = ng_app_keep_awake_enabled();
 
     pthread_mutex_lock(&installer_lock);
     if (installer_stopping) {
@@ -1552,6 +1651,7 @@ ng_installer_start(const NgGame *game, NgSource *source, NgInstallTarget target,
         snprintf(error, error_size, "安装队列已满，请等待当前任务完成");
         return -1;
     }
+    ng_source_acquire(source);
     install_queue[install_queue_count++] = task;
     if (!installer_worker_running) {
         installer_worker_running = 1;
@@ -1573,13 +1673,13 @@ ng_installer_start(const NgGame *game, NgSource *source, NgInstallTarget target,
             install_queue_count = 0;
             installer_worker_running = 0;
             pthread_mutex_unlock(&installer_lock);
+            ng_source_release(source);
             free(task);
             snprintf(error, error_size, "无法创建安装线程");
             return -1;
         }
         pthread_detach(thread);
     }
-    ng_source_acquire(source);
     pthread_mutex_unlock(&installer_lock);
     return 0;
 }
@@ -1703,7 +1803,7 @@ ng_installer_repair_homebrew_permissions(void)
     while (1) {
         struct dirent *entry = readdir(dir);
         if (!entry) break;
-        if (entry->d_name[0] == '.' || !valid_tid(entry->d_name)) continue;
+        if (entry->d_name[0] == '.' || !ng_valid_title_id(entry->d_name)) continue;
         char root[NG_PATH_LEN];
         char eboot[NG_PATH_LEN];
         if (snprintf(root, sizeof(root), "/data/homebrew/%s", entry->d_name) >=
@@ -1730,20 +1830,20 @@ void
 ng_installer_remount_imported(void)
 {
 #ifdef __PROSPERO__
-    NgConfig cfg;
+    char data_dir[NG_PATH_LEN];
     char library[NG_PATH_LEN];
     DIR *dir;
     struct dirent *entry;
 
-    ng_app_config_snapshot(&cfg);
-    snprintf(library, sizeof(library), "%s/library", cfg.data_dir);
+    ng_app_data_dir_snapshot(data_dir, sizeof(data_dir));
+    if (ng_path_join_local(library, sizeof(library), data_dir, "library") != 0) return;
     dir = opendir(library);
     if (!dir) return;
     while ((entry = readdir(dir)) != NULL) {
         char src[NG_PATH_LEN];
         char check[NG_PATH_LEN];
         char error[NG_ERROR_LEN];
-        if (entry->d_name[0] == '.' || !valid_tid(entry->d_name)) continue;
+        if (entry->d_name[0] == '.' || !ng_valid_title_id(entry->d_name)) continue;
         snprintf(src, sizeof(src), "%s/%s", library, entry->d_name);
         snprintf(check, sizeof(check), "%s/eboot.bin", src);
         if (!readable_regular_file(check)) continue;

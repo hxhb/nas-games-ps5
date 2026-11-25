@@ -116,6 +116,18 @@ ng_source_error_snapshot(NgSource *source, const char *fallback,
 }
 
 void
+ng_source_reset_connection(NgSource *source)
+{
+    if (!source) return;
+    pthread_mutex_lock(&source->io_lock);
+    if (source->connected && source->ops && source->ops->disconnect) {
+        source->ops->disconnect(source);
+    }
+    source->connected = 0;
+    pthread_mutex_unlock(&source->io_lock);
+}
+
+void
 ng_source_list_init(NgSourceList *list)
 {
     memset(list, 0, sizeof(*list));
@@ -375,6 +387,15 @@ ng_source_file_seek(NgSourceFile *file, uint64_t offset)
     pthread_mutex_unlock(&file->source->io_lock);
     if (rc == 0) file->offset = offset;
     return rc;
+}
+
+void
+ng_source_file_set_read_limit(NgSourceFile *file, uint64_t limit)
+{
+    if (!file || !file->handle || !file->source->ops->file_set_read_limit) return;
+    pthread_mutex_lock(&file->source->io_lock);
+    file->source->ops->file_set_read_limit(file->source, file->handle, limit);
+    pthread_mutex_unlock(&file->source->io_lock);
 }
 
 void

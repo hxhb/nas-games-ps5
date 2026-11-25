@@ -35,10 +35,10 @@
     launchButton: $("launchButton"),
     launchButtonText: $("launchButtonText"),
     installButton: $("installButton"),
+    detailActionPanel: $("detailActionPanel"),
+    detailPanelHead: $("detailPanelHead"),
     detailActionTitle: $("detailActionTitle"),
     detailInstallStatus: $("detailInstallStatus"),
-    detailInstalledState: $("detailInstalledState"),
-    detailInstalledMeta: $("detailInstalledMeta"),
     detailHint: $("detailHint"),
     detailPackages: $("detailPackages"),
     detailPackagesCount: $("detailPackagesCount"),
@@ -178,6 +178,7 @@
     launchScreenActive: false,
     launchScreenGameId: "",
     launchResetTimer: 0,
+    detailLaunchArmed: false,
     statusTimer: 0,
     logTimer: 0,
     logBusy: false,
@@ -210,6 +211,8 @@
     folder: "文件夹",
     pkg: "PKG",
   };
+  const uiVersion = document.querySelector('meta[name="game-center-version"]')
+    ?.getAttribute("content") || "";
 
   function element(tag, className, text) {
     const result = document.createElement(tag);
@@ -228,11 +231,17 @@
   }
 
   async function api(path, options = {}) {
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 15000;
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : 0;
     const request = {
       method: options.method || "GET",
       cache: "no-store",
-      headers: options.headers ? Object.assign({}, options.headers) : {},
+      headers: Object.assign({
+        "X-Game-Center-Request": "1",
+      }, options.headers || {}),
     };
+    if (controller) request.signal = controller.signal;
     if (request.method !== "GET" && request.method !== "HEAD") {
       request.headers["Content-Type"] = "application/json";
     }
@@ -241,20 +250,29 @@
         ? options.body
         : JSON.stringify(options.body);
     }
-    const response = await fetch(path, request);
-    const text = await response.text();
-    let data = {};
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch (error) {
-        data = { ok: false, error: text };
+    try {
+      const response = await fetch(path, request);
+      const text = await response.text();
+      let data = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          data = { ok: false, error: text };
+        }
       }
+      if (!response.ok || data.ok === false) {
+        throw new Error((data && data.error) || `HTTP ${response.status}`);
+      }
+      return data;
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw new Error("请求超时，请检查网络连接或稍后重试");
+      }
+      throw error;
+    } finally {
+      if (timer) window.clearTimeout(timer);
     }
-    if (!response.ok || data.ok === false) {
-      throw new Error((data && data.error) || `HTTP ${response.status}`);
-    }
-    return data;
   }
 
   function showToast(message, type = "") {
@@ -644,7 +662,7 @@
         renderDetail(true);
       }
     };
-    api(`/api/game-size?id=${encodeURIComponent(game.id)}`)
+    api(`/api/game-size?id=${encodeURIComponent(game.id)}`, { timeoutMs: 45000 })
       .then((data) => {
         if (app.sizeStates[game.id] !== pending) return;
         const size = Number(data.size) || 0;
@@ -904,22 +922,18 @@
       container.appendChild(row);
       return container;
     }
-    container.appendChild(element("div", "empty-icon", "⌕"));
     container.appendChild(element("h2", "", "没有符合条件的游戏"));
     container.appendChild(element("p", "", "尝试切换筛选条件或清空搜索关键字。"));
     const button = element("button", "secondary-button", "清空筛选");
     button.type = "button";
     button.addEventListener("click", () => {
       app.filter = "all";
-      app.format = "all";
       app.query = "";
       ui.search.value = "";
       for (const filter of ui.filters.querySelectorAll("[data-filter]")) {
         filter.classList.toggle("is-active", filter.dataset.filter === "all");
       }
-      updateFormatFilterValue();
-      setFormatMenu(false);
-      renderLibrary(true);
+      setFormat("all");
     });
     container.appendChild(button);
     return container;
@@ -1100,12 +1114,29 @@
     }, 8000);
   }
 
-  function scheduleInstallRefresh() {
+  function scheduleInstallRefresh(job) {
     window.clearTimeout(app.transferFollowupTimer);
-    app.transferFollowupTimer = window.setTimeout(async () => {
+    const finishedAt = Number(job && job.finishedAt) || 0;
+    const startRevision = Number(app.state && app.state.catalogRevision) || 0;
+    let attempts = 0;
+    const refresh = async () => {
+      attempts++;
       await refreshState(true);
-      window.setTimeout(() => refreshState(true), 1300);
-    }, 500);
+      const scan = app.state && app.state.scan ? app.state.scan : {};
+      const revision = Number(app.state && app.state.catalogRevision) || 0;
+      const scanned = !scan.busy &&
+        (!finishedAt || Number(scan.finishedAt) >= finishedAt);
+      if ((scanned && revision !== startRevision) || attempts >= 30) {
+        if (attempts < 30) {
+          app.librarySignature = "";
+          renderLibrary(true);
+          showToast("游戏库已刷新", "success");
+        }
+        return;
+      }
+      app.transferFollowupTimer = window.setTimeout(refresh, 350);
+    };
+    app.transferFollowupTimer = window.setTimeout(refresh, 300);
   }
 
   function renderJob() {
@@ -1171,9 +1202,12 @@
       failed ? (job.stage || "安装失败") :
       canceled ? (job.stage || "已取消") :
       done ? (job.stage || "安装完成") : "空闲");
-    setText(ui.transferMessage, job.message || (queue.length
-      ? `仍有 ${queue.length} 个任务等待安装`
-      : "当前没有传输任务"));
+    const refreshing = done && app.state.scan && app.state.scan.busy;
+    setText(ui.transferMessage, refreshing && job.message
+      ? `${job.message} · 正在刷新游戏库…`
+      : (job.message || (queue.length
+        ? `仍有 ${queue.length} 个任务等待安装`
+        : "当前没有传输任务")));
     ui.transferStateDot.className = "transfer-state-dot " + (
       running ? "running" : failed ? "error" :
       canceled ? "canceled" : done ? "done" : "idle");
@@ -1245,7 +1279,7 @@
         if (done) {
           showToast(`${title}：${message}`, "success");
           scheduleTransferAutoHide(key);
-          scheduleInstallRefresh();
+          scheduleInstallRefresh(job);
         } else if (failed) {
           showToast(`${title}：${message}`, "error");
         } else {
@@ -1376,15 +1410,6 @@
     const compressed = game.type === "folder" && game.packing !== "plain";
     const installed = !!group.installed;
     const launchable = !!group.launchable;
-    const installedMeta = [
-      launchable ? "可直接启动" : "",
-      game.installedVersion ? `系统版本 ${game.installedVersion}` : "",
-      game.libraryCopy ? "已注册到主界面" : "",
-      installed && !game.installedVersion && !game.libraryCopy ? "系统安装状态已确认" : "",
-    ].filter(Boolean);
-    ui.detailInstalledState.hidden = !installed;
-    setText(ui.detailInstalledMeta,
-      installedMeta.join(" · ") || "基础游戏已安装，无需再次安装");
     setText(ui.detailActionTitle,
       launchable ? "启动与内容" : installed ? "游戏内容" : "安装与内容");
     ui.detailInstallStatus.className = "detail-install-status " + (
@@ -1399,7 +1424,8 @@
     ui.detailTechNote.hidden = true;
     setText(ui.detailTechNote, "");
     ui.launchButton.hidden = !launchable;
-    ui.launchButton.disabled = !!app.launchBusy;
+    ui.launchButton.disabled = false;
+    ui.launchButton.setAttribute("aria-busy", app.launchBusy ? "true" : "false");
     ui.launchButton.classList.toggle("is-launching", !!app.launchBusy);
     setText(ui.launchButtonText, app.launchBusy ? "正在启动…" : "启动游戏");
     ui.launchButton.dataset.defaultLabel = "启动游戏";
@@ -1448,6 +1474,9 @@
       setText(ui.detailHint,
         "系统已确认基础游戏安装，但当前记录缺少可启动的 Title ID。");
     }
+    ui.detailPanelHead.hidden = installed;
+    ui.detailHint.hidden = installed;
+    ui.detailActionPanel.classList.toggle("is-installed", installed);
     ui.installButton.dataset.defaultLabel = ui.installButton.textContent;
     app.detailSpaceKey = "";
     requestGameSize(group, game);
@@ -1475,7 +1504,13 @@
     const focused = document.activeElement;
     const registrationOnly = game.type === "folder" && game.packing === "plain" && game.libraryCopy;
     const alreadyCopied = game.type === "folder" && game.packing !== "plain" && game.homebrewCopy;
-    const insufficient = renderDetailStorage(game, sizeInfo, registrationOnly);
+    const installed = !!group.installed;
+    let insufficient = false;
+    if (installed) {
+      ui.detailStorage.hidden = true;
+    } else {
+      insufficient = renderDetailStorage(game, sizeInfo, registrationOnly);
+    }
     const loading = game.type === "folder" && sizeInfo.status === "loading" && !registrationOnly;
     const disabled = ui.installButton.hidden || alreadyCopied || insufficient || loading ||
       (game.type === "pkg" && installStatusInfo(game).disabled);
@@ -1572,6 +1607,23 @@
     target.focus({ preventScroll: true });
   }
 
+  function setDetailLaunchArmed(armed) {
+    app.detailLaunchArmed = !!armed;
+    ui.launchButton.classList.toggle("is-armed", !!armed);
+  }
+
+  function recoverDetailFocus() {
+    if (ui.detailPanel.hidden || app.launchScreenActive ||
+        !ui.confirmPanel.hidden || !ui.editorPanel.hidden ||
+        !ui.browserPanel.hidden || !ui.settingsPanel.hidden) {
+      return;
+    }
+    const active = document.activeElement;
+    if (!active || active === document.body || !ui.detailPanel.contains(active)) {
+      focusDetailAction();
+    }
+  }
+
   function render() {
     renderHeaderState();
     renderLibrary(false);
@@ -1584,7 +1636,41 @@
     if (app.refreshBusy) return;
     app.refreshBusy = true;
     try {
-      const next = await api("/api/state");
+      const canIncremental = !!(app.state && Array.isArray(app.state.games) &&
+        app.state.server && app.state.server.instance &&
+        app.state.catalogRevision !== undefined);
+      const stateUrl = canIncremental
+        ? `/api/state?catalogRevision=${encodeURIComponent(app.state.catalogRevision)}` +
+          `&instance=${encodeURIComponent(app.state.server.instance)}`
+        : "/api/state";
+      let next = await api(stateUrl);
+      if (next.gamesUnchanged) {
+        if (app.state && Array.isArray(app.state.games) &&
+            app.state.server && next.server &&
+            app.state.server.instance === next.server.instance) {
+          next.games = app.state.games;
+        } else {
+          next = await api("/api/state");
+        }
+      }
+      if ((app.state && next.version !== app.state.version) ||
+          (uiVersion && next.version && next.version !== uiVersion)) {
+        const target = new URL(window.location.href);
+        target.searchParams.set("v", next.version || "");
+        const reloadKey = `game-center-ui-${next.version}`;
+        let reloaded = false;
+        try {
+          if (sessionStorage.getItem(reloadKey) !== "1") {
+            sessionStorage.setItem(reloadKey, "1");
+            window.location.replace(target.toString());
+            reloaded = true;
+          }
+        } catch (error) {
+          window.location.replace(target.toString());
+          reloaded = true;
+        }
+        if (reloaded) return;
+      }
       if (app.state && (app.state.version !== next.version ||
           app.state.server.instance !== next.server.instance)) {
         app.groupsRevision = -1;
@@ -1630,11 +1716,15 @@
 
   function scheduleStatusPoll(delay) {
     window.clearTimeout(app.statusTimer);
+    const nextInterval = () => {
+      if (document.hidden && !needsFastRefresh()) return 10000;
+      return needsFastRefresh() ? 900 : 2200;
+    };
     app.statusTimer = window.setTimeout(async () => {
       app.statusTimer = 0;
       await refreshState(true);
-      scheduleStatusPoll(needsFastRefresh() ? 900 : 2200);
-    }, delay === undefined ? (needsFastRefresh() ? 900 : 2200) : delay);
+      scheduleStatusPoll(nextInterval());
+    }, delay === undefined ? nextInterval() : delay);
   }
 
   async function requestScan() {
@@ -1690,15 +1780,20 @@
     ui.detailPanel.hidden = false;
     app.detailKey = "";
     renderDetail(true);
+    setDetailLaunchArmed(!!group && !!group.launchable);
     invalidateFocusCache();
-    window.setTimeout(() => {
+    const focusPrimary = () => {
       if (!ui.detailPanel.hidden) focusDetailAction();
-    }, 30);
+    };
+    focusPrimary();
+    window.requestAnimationFrame(focusPrimary);
+    window.setTimeout(focusPrimary, 30);
   }
 
   function closeDetail(restore = true) {
     app.selectedGameId = null;
     app.detailKey = "";
+    setDetailLaunchArmed(false);
     ui.detailPanel.hidden = true;
     invalidateFocusCache();
     window.setTimeout(renderJob, 0);
@@ -1802,18 +1897,19 @@
     });
   }
 
-  function isLauncherMode() {
-    return new URLSearchParams(window.location.search).get("launcher") === "1" ||
-      /playstation/i.test(navigator.userAgent || "");
-  }
-
   function resetLaunchControl(gameId) {
     app.launchBusy = false;
     const selected = findGameGroup(app.selectedGameId);
     if (!ui.detailPanel.hidden && selected && selected.primary.id === gameId) {
       ui.launchButton.disabled = false;
+      ui.launchButton.setAttribute("aria-busy", "false");
       ui.launchButton.classList.remove("is-launching");
       setText(ui.launchButtonText, "启动游戏");
+      window.requestAnimationFrame(() => {
+        if (!ui.detailPanel.hidden && !ui.launchButton.hidden) {
+          ui.launchButton.focus({ preventScroll: true });
+        }
+      });
     }
   }
 
@@ -1836,6 +1932,17 @@
     app.launchScreenGameId = gameId;
     setText(ui.launchScreenTitle, title);
     ui.launchScreen.hidden = false;
+    const isPs5Browser = /PlayStation/i.test(navigator.userAgent || "") ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "localhost";
+    if (!isPs5Browser) {
+      app.launchResetTimer = window.setTimeout(() => {
+        app.launchResetTimer = 0;
+        finishLaunchScreen(false);
+        showToast(`已向 PS5 发送启动“${title}”的请求`, "success");
+      }, 1800);
+      return;
+    }
     app.launchResetTimer = window.setTimeout(() => {
       app.launchResetTimer = 0;
       if (document.hidden) return;
@@ -1846,23 +1953,21 @@
   async function launchGame() {
     const group = findGameGroup(app.selectedGameId);
     if (!group || !group.launchable || app.launchBusy) return;
+    setDetailLaunchArmed(false);
     const gameId = group.primary.id;
     const title = group.title || group.titleId || "该游戏";
 
     app.launchBusy = true;
-    ui.launchButton.disabled = true;
+    ui.launchButton.setAttribute("aria-busy", "true");
     ui.launchButton.classList.add("is-launching");
     setText(ui.launchButtonText, "正在启动…");
     try {
-      const result = await api("/api/launch", {
+      await api("/api/launch", {
         method: "POST",
         body: { gameId },
       });
-      if (isLauncherMode()) {
-        beginLaunchScreen(title, gameId);
-        return;
-      }
-      showToast(result.message || `正在启动“${title}”`, "success");
+      beginLaunchScreen(title, gameId);
+      return;
     } catch (error) {
       showToast(`无法启动“${title}”：${error.message}`, "error");
     } finally {
@@ -2682,6 +2787,7 @@
       const result = await api("/api/test", {
         method: "POST",
         body: sourceRequestPayload(source),
+        timeoutMs: 45000,
       });
       showToast(result.message || "连接成功", "success");
     } catch (error) {
@@ -2703,6 +2809,7 @@
       const result = await api("/api/test", {
         method: "POST",
         body: sourceRequestPayload(source),
+        timeoutMs: 45000,
       });
       if (app.editor !== editor) return;
       editor.testState = "success";
@@ -2767,7 +2874,7 @@
     try {
       const body = sourceRequestPayload(app.browser.source);
       body.path = nextPath;
-      const result = await api("/api/browse", { method: "POST", body });
+      const result = await api("/api/browse", { method: "POST", body, timeoutMs: 45000 });
       if (token !== app.browser.token) return;
       app.browser.path = result.path || nextPath;
       ui.browserPath.value = app.browser.path;
@@ -2922,6 +3029,7 @@
       const result = await api("/api/shares", {
         method: "POST",
         body: sourceRequestPayload(source),
+        timeoutMs: 45000,
       });
       if (app.editor !== editor || ui.sharePicker.hidden) return;
       const shares = Array.isArray(result.shares) ? result.shares : [];
@@ -3056,6 +3164,7 @@
 
   function navigate(direction) {
     const scope = topLayer();
+    if (scope === ui.detailPanel) setDetailLaunchArmed(false);
     const cache = focusCacheFor(scope);
     const items = cache.nodes;
     if (!items.length) return;
@@ -3095,7 +3204,24 @@
   function activateCurrent() {
     const current = document.activeElement;
     const scope = topLayer();
+    if (scope === ui.detailPanel && app.detailLaunchArmed) {
+      setDetailLaunchArmed(false);
+      if (!ui.launchButton.hidden && !ui.launchButton.disabled) {
+        launchGame();
+      } else {
+        focusDetailAction();
+      }
+      return;
+    }
     if (!current || !scope.contains(current)) {
+      if (scope === ui.detailPanel) {
+        if (!ui.launchButton.hidden && !ui.launchButton.disabled) {
+          launchGame();
+        } else {
+          focusDetailAction();
+        }
+        return;
+      }
       const items = focusableElements(scope);
       if (items[0]) items[0].focus();
       return;
@@ -3115,6 +3241,13 @@
 
   document.addEventListener("keydown", (event) => {
     if (event.defaultPrevented) return;
+    if ((event.key === "Enter" || event.key === " ") &&
+        !isEditable(event.target)) {
+      event.preventDefault();
+      if (event.repeat) return;
+      activateCurrent();
+      return;
+    }
     if (!ui.formatMenu.hidden && event.key === "Escape") {
       event.preventDefault();
       setFormatMenu(false);
@@ -3139,6 +3272,25 @@
     if (isEditable(event.target)) return;
     event.preventDefault();
     navigate(direction);
+  });
+
+  document.addEventListener("focusin", (event) => {
+    for (const node of document.querySelectorAll(".gamepad-focus")) {
+      if (node !== event.target) node.classList.remove("gamepad-focus");
+    }
+    if (event.target && event.target.matches &&
+        event.target.matches("button, input, select, [tabindex='0']")) {
+      event.target.classList.add("gamepad-focus");
+    }
+  });
+
+  document.addEventListener("focusout", (event) => {
+    if (event.target && event.target.classList) {
+      event.target.classList.remove("gamepad-focus");
+    }
+    if (topLayer() === ui.detailPanel && !app.launchBusy) {
+      window.setTimeout(recoverDetailFocus, 0);
+    }
   });
 
   window.addEventListener("scroll", invalidateFocusCache, true);
@@ -3401,6 +3553,22 @@
     };
     const repeatDelay = 350;
     const repeatInterval = 120;
+    let rafId = 0;
+    let idleTimer = 0;
+    let idleFrames = 0;
+    const resetButtons = () => {
+      for (const item of Object.values(state)) {
+        item.pressed = false;
+        item.repeatAt = 0;
+      }
+    };
+    const findConnectedPad = () => {
+      const pads = navigator.getGamepads();
+      for (const candidate of pads) {
+        if (candidate && candidate.connected) return candidate;
+      }
+      return null;
+    };
     const trigger = (key, active, action, repeatable = true) => {
       const now = performance.now();
       const item = state[key];
@@ -3419,13 +3587,44 @@
         action();
       }
     };
-    function tick() {
-      const pads = navigator.getGamepads();
-      let pad = null;
-      for (const candidate of pads) {
-        if (candidate && candidate.connected) { pad = candidate; break; }
+    const stopLoop = () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+        rafId = 0;
       }
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+        idleTimer = 0;
+      }
+      resetButtons();
+    };
+    const scheduleProbe = () => {
+      if (document.hidden || rafId || idleTimer) return;
+      idleTimer = window.setTimeout(() => {
+        idleTimer = 0;
+        if (document.hidden) return;
+        if (findConnectedPad()) startLoop();
+        else scheduleProbe();
+      }, 1500);
+    };
+    const startLoop = () => {
+      if (document.hidden || rafId) return;
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+        idleTimer = 0;
+      }
+      idleFrames = 0;
+      rafId = window.requestAnimationFrame(tick);
+    };
+    function tick() {
+      rafId = 0;
+      if (document.hidden) {
+        resetButtons();
+        return;
+      }
+      const pad = findConnectedPad();
       if (pad) {
+        idleFrames = 0;
         const button = (index) => !!(pad.buttons[index] && pad.buttons[index].pressed);
         const axisX = pad.axes[0] || 0;
         const axisY = pad.axes[1] || 0;
@@ -3435,10 +3634,29 @@
         trigger("right", button(15) || axisX > 0.62, () => navigate("right"));
         trigger("a", button(0), activateCurrent, false);
         trigger("b", button(1), goBack, false);
+        rafId = window.requestAnimationFrame(tick);
+        return;
       }
-      window.requestAnimationFrame(tick);
+      idleFrames += 1;
+      if (idleFrames < 20) {
+        rafId = window.requestAnimationFrame(tick);
+      } else {
+        resetButtons();
+        scheduleProbe();
+      }
     }
-    window.requestAnimationFrame(tick);
+    window.addEventListener("gamepadconnected", startLoop);
+    window.addEventListener("gamepaddisconnected", () => {
+      if (!findConnectedPad()) {
+        stopLoop();
+        scheduleProbe();
+      }
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopLoop();
+      else startLoop();
+    });
+    startLoop();
   }
 
   async function boot() {

@@ -106,6 +106,7 @@ ng_app_init(const char *data_dir)
 
     memset(&g_app, 0, sizeof(g_app));
     pthread_mutex_init(&g_app.lock, NULL);
+    pthread_cond_init(&g_app.scan_cond, NULL);
     pthread_mutex_init(&g_app.catalog_lock, NULL);
     pthread_mutex_init(&g_app.job_lock, NULL);
     ng_config_defaults(&g_app.config, data_dir && *data_dir ? data_dir : "/data/nasgames");
@@ -162,7 +163,22 @@ ng_app_start_scanner(void)
 void
 ng_app_stop(void)
 {
+    NgSource *retired[NG_MAX_SOURCES];
+    int retired_count = 0;
+
     ng_scanner_stop();
+    pthread_mutex_lock(&g_app.lock);
+    for (int i = 0; i < g_app.source_count; i++) {
+        if (g_app.sources[i]) retired[retired_count++] = g_app.sources[i];
+        g_app.sources[i] = NULL;
+    }
+    g_app.source_count = 0;
+    pthread_mutex_unlock(&g_app.lock);
+    release_sources(retired, retired_count);
+    pthread_mutex_lock(&g_app.catalog_lock);
+    free_catalog(&g_app.catalog);
+    g_app.measured_size_count = 0;
+    pthread_mutex_unlock(&g_app.catalog_lock);
 }
 
 void
@@ -171,6 +187,57 @@ ng_app_config_snapshot(NgConfig *out)
     pthread_mutex_lock(&g_app.lock);
     *out = g_app.config;
     pthread_mutex_unlock(&g_app.lock);
+}
+
+void
+ng_app_data_dir_snapshot(char *out, size_t out_size)
+{
+    if (!out || !out_size) return;
+    pthread_mutex_lock(&g_app.lock);
+    ng_strlcpy(out, g_app.config.data_dir, out_size);
+    pthread_mutex_unlock(&g_app.lock);
+}
+
+int
+ng_app_keep_awake_enabled(void)
+{
+    int enabled;
+    pthread_mutex_lock(&g_app.lock);
+    enabled = g_app.config.keep_awake;
+    pthread_mutex_unlock(&g_app.lock);
+    return enabled;
+}
+
+int
+ng_app_server_port(void)
+{
+    int port;
+    pthread_mutex_lock(&g_app.lock);
+    port = g_app.actual_port ? g_app.actual_port : g_app.config.port;
+    pthread_mutex_unlock(&g_app.lock);
+    return port;
+}
+
+int
+ng_app_open_browser_on_start(void)
+{
+    int enabled;
+    pthread_mutex_lock(&g_app.lock);
+    enabled = g_app.config.open_browser_on_start;
+    pthread_mutex_unlock(&g_app.lock);
+    return enabled;
+}
+
+int
+ng_app_parse_source_json(const char *json, NgSourceConfig *out,
+                         char *error, size_t error_size)
+{
+    int rc;
+
+    pthread_mutex_lock(&g_app.lock);
+    rc = ng_config_source_from_json(json, &g_app.config, out, error, error_size);
+    pthread_mutex_unlock(&g_app.lock);
+    return rc;
 }
 
 int
@@ -205,25 +272,34 @@ int
 ng_app_apply_config(const char *json, char *error, size_t error_size)
 {
     int rc;
-    NgConfig copy;
+    NgConfig *copy;
+    int source_count = 0;
     NgSource *retired[NG_MAX_SOURCES];
     int retired_count = 0;
 
+    copy = malloc(sizeof(*copy));
+    if (!copy) {
+        snprintf(error, error_size, "内存不足");
+        return -1;
+    }
     pthread_mutex_lock(&g_app.lock);
-    if (ng_config_from_json(json, &g_app.config, &copy, error, error_size) != 0) {
+    if (ng_config_from_json(json, &g_app.config, copy, error, error_size) != 0) {
         pthread_mutex_unlock(&g_app.lock);
+        free(copy);
         return 1;
     }
-    rc = ng_config_save(&copy, g_app.config_path);
+    rc = ng_config_save(copy, g_app.config_path);
     if (rc != 0) snprintf(error, error_size, "保存配置失败: %s", strerror(errno));
     if (rc == 0) {
-        int source_changed = copy.source_count != g_app.config.source_count ||
-            memcmp(copy.sources, g_app.config.sources,
-                   (size_t)copy.source_count * sizeof(copy.sources[0])) != 0;
-        g_app.config = copy;
+        int source_changed = copy->source_count != g_app.config.source_count ||
+            memcmp(copy->sources, g_app.config.sources,
+                   (size_t)copy->source_count * sizeof(copy->sources[0])) != 0;
+        source_count = copy->source_count;
+        g_app.config = *copy;
         g_app.config_generation++;
         rebuild_sources_locked(retired, &retired_count);
         g_app.scan_requested = 1;
+        pthread_cond_broadcast(&g_app.scan_cond);
         if (source_changed) {
             size_t kept = 0;
             pthread_mutex_lock(&g_app.catalog_lock);
@@ -249,10 +325,11 @@ ng_app_apply_config(const char *json, char *error, size_t error_size)
         }
     }
     pthread_mutex_unlock(&g_app.lock);
+    free(copy);
     if (retired_count) ng_http_stream_cache_clear();
     release_sources(retired, retired_count);
     if (rc != 0) return -1;
-    ng_log_info("配置已更新，共 %d 个连接", copy.source_count);
+    ng_log_info("配置已更新，共 %d 个连接", source_count);
     return 0;
 }
 
@@ -347,22 +424,20 @@ ng_app_mark_game_installed(const char *game_id, const char *title_id)
     return 0;
 }
 
-int
-ng_app_mark_game_library(const char *game_id, const char *title_id)
+static int
+mark_game_copy_flag(const char *game_id, const char *title_id, int homebrew)
 {
     int changed = 0;
 
     pthread_mutex_lock(&g_app.catalog_lock);
     for (size_t i = 0; i < g_app.catalog.count; i++) {
-        if (game_id && !strcmp(g_app.catalog.items[i].id, game_id)) {
-            if (!g_app.catalog.items[i].library_copy) changed = 1;
-            g_app.catalog.items[i].library_copy = 1;
-            break;
-        }
-        if (!game_id && title_id && title_id[0] &&
-            !strcmp(g_app.catalog.items[i].title_id, title_id)) {
-            if (!g_app.catalog.items[i].library_copy) changed = 1;
-            g_app.catalog.items[i].library_copy = 1;
+        NgGame *item = &g_app.catalog.items[i];
+        int matched = (game_id && !strcmp(item->id, game_id)) ||
+            (!game_id && title_id && title_id[0] && !strcmp(item->title_id, title_id));
+        if (matched) {
+            int *flag = homebrew ? &item->homebrew_copy : &item->library_copy;
+            if (!*flag) changed = 1;
+            *flag = 1;
             break;
         }
     }
@@ -372,27 +447,15 @@ ng_app_mark_game_library(const char *game_id, const char *title_id)
 }
 
 int
+ng_app_mark_game_library(const char *game_id, const char *title_id)
+{
+    return mark_game_copy_flag(game_id, title_id, 0);
+}
+
+int
 ng_app_mark_game_homebrew(const char *game_id, const char *title_id)
 {
-    int changed = 0;
-
-    pthread_mutex_lock(&g_app.catalog_lock);
-    for (size_t i = 0; i < g_app.catalog.count; i++) {
-        if (game_id && !strcmp(g_app.catalog.items[i].id, game_id)) {
-            if (!g_app.catalog.items[i].homebrew_copy) changed = 1;
-            g_app.catalog.items[i].homebrew_copy = 1;
-            break;
-        }
-        if (!game_id && title_id && title_id[0] &&
-            !strcmp(g_app.catalog.items[i].title_id, title_id)) {
-            if (!g_app.catalog.items[i].homebrew_copy) changed = 1;
-            g_app.catalog.items[i].homebrew_copy = 1;
-            break;
-        }
-    }
-    if (changed) g_app.catalog_revision++;
-    pthread_mutex_unlock(&g_app.catalog_lock);
-    return 0;
+    return mark_game_copy_flag(game_id, title_id, 1);
 }
 
 int
@@ -436,8 +499,36 @@ ng_app_request_scan(void)
     pthread_mutex_lock(&g_app.lock);
     g_app.scan_requested = 1;
     uint64_t sequence = g_app.scan_sequence + 1;
+    pthread_cond_broadcast(&g_app.scan_cond);
     pthread_mutex_unlock(&g_app.lock);
     return sequence;
+}
+
+void
+ng_app_wake_scanner(void)
+{
+    pthread_mutex_lock(&g_app.lock);
+    pthread_cond_broadcast(&g_app.scan_cond);
+    pthread_mutex_unlock(&g_app.lock);
+}
+
+void
+ng_app_wait_scan_signal(unsigned int timeout_ms)
+{
+    struct timespec deadline;
+
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += (time_t)(timeout_ms / 1000u);
+    deadline.tv_nsec += (long)((timeout_ms % 1000u) * 1000000u);
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    pthread_mutex_lock(&g_app.lock);
+    if (!g_app.scan_requested) {
+        pthread_cond_timedwait(&g_app.scan_cond, &g_app.lock, &deadline);
+    }
+    pthread_mutex_unlock(&g_app.lock);
 }
 
 int
@@ -708,7 +799,9 @@ job_state_name(NgJobState state)
 }
 
 int
-ng_app_state_json(NgStrBuf *out)
+ng_app_state_json_since(NgStrBuf *out, int has_revision,
+                        uint64_t known_revision,
+                        const char *known_instance)
 {
     NgJob job;
     NgJob history[NG_JOB_HISTORY_MAX];
@@ -717,6 +810,7 @@ ng_app_state_json(NgStrBuf *out)
     uint64_t finished;
     uint64_t scan_sequence;
     char scan_message[NG_ERROR_LEN];
+    char instance[64];
     int port;
     int auto_scan;
     int interval;
@@ -725,6 +819,7 @@ ng_app_state_json(NgStrBuf *out)
     NgInstallQueueItem wait_items[NG_INSTALL_QUEUE_MAX];
     int wait_count;
     int history_count;
+    int instance_matches;
 
     pthread_mutex_lock(&g_app.lock);
     busy = g_app.scan_busy;
@@ -737,6 +832,10 @@ ng_app_state_json(NgStrBuf *out)
     interval = g_app.config.scan_interval_seconds;
     ng_strlcpy(data_dir, g_app.config.data_dir, sizeof(data_dir));
     pthread_mutex_unlock(&g_app.lock);
+    snprintf(instance, sizeof(instance), "%ld-%llu",
+             (long)getpid(), (unsigned long long)g_app.started_at);
+    instance_matches = !known_instance || !known_instance[0] ||
+        !strcmp(known_instance, instance);
     history_count = job_history_snapshot(&job, history);
     wait_count = ng_installer_queue_snapshot(wait_items, NG_INSTALL_QUEUE_MAX);
     if (ng_path_join_local(library_path, sizeof(library_path), data_dir, "library") != 0) {
@@ -752,10 +851,9 @@ ng_app_state_json(NgStrBuf *out)
                      (unsigned long long)started, (unsigned long long)finished);
     ng_strbuf_json_string(out, scan_message);
     ng_strbuf_printf(out,
-                     "},\"server\":{\"port\":%d,\"autoScan\":%s,\"interval\":%d,\"instance\":\"%ld-%llu\"},"
+                     "},\"server\":{\"port\":%d,\"autoScan\":%s,\"interval\":%d,\"instance\":\"%s\"},"
                      "\"job\":{\"state\":",
-                     port, auto_scan ? "true" : "false", interval, (long)getpid(),
-                     (unsigned long long)g_app.started_at);
+                     port, auto_scan ? "true" : "false", interval, instance);
     ng_strbuf_json_string(out, job_state_name(job.state));
     ng_strbuf_append(out, ",\"gameId\":");
     ng_strbuf_json_string(out, job.game_id);
@@ -850,14 +948,33 @@ ng_app_state_json(NgStrBuf *out)
     }
     pthread_mutex_unlock(&g_app.lock);
     pthread_mutex_lock(&g_app.catalog_lock);
-    ng_strbuf_printf(out, "],\"catalogRevision\":%llu,\"catalogConfigGeneration\":%u,\"games\":[",
-                     (unsigned long long)g_app.catalog_revision, g_app.catalog_config_generation);
+    if (has_revision && instance_matches &&
+        g_app.catalog_revision == known_revision) {
+        ng_strbuf_printf(out,
+                         "],\"catalogRevision\":%llu,\"catalogConfigGeneration\":%u,"
+                         "\"gamesUnchanged\":true}",
+                         (unsigned long long)g_app.catalog_revision,
+                         g_app.catalog_config_generation);
+        pthread_mutex_unlock(&g_app.catalog_lock);
+        return out->failed ? -1 : 0;
+    }
+    ng_strbuf_printf(out,
+                     "],\"catalogRevision\":%llu,\"catalogConfigGeneration\":%u,"
+                     "\"gamesUnchanged\":false,\"games\":[",
+                     (unsigned long long)g_app.catalog_revision,
+                     g_app.catalog_config_generation);
     for (size_t i = 0; i < g_app.catalog.count; i++) {
         if (i) ng_strbuf_append(out, ",");
         state_game_json(out, &g_app.catalog.items[i]);
     }
     pthread_mutex_unlock(&g_app.catalog_lock);
     return ng_strbuf_append(out, "]}");
+}
+
+int
+ng_app_state_json(NgStrBuf *out)
+{
+    return ng_app_state_json_since(out, 0, 0, NULL);
 }
 
 int

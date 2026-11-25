@@ -7,7 +7,7 @@
 #include <time.h>
 
 #define NG_APP_NAME "Game Center"
-#define NG_VERSION "1.0.5"
+#define NG_VERSION "1.0.13"
 
 #define NG_MAX_SOURCES 16
 #define NG_MAX_ROOTS 12

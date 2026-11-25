@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "common.h"
 #include "installer.h"
 #include "log.h"
 #include "ui_assets.h"
@@ -181,7 +182,7 @@ ng_launcher_ensure(int port, char *error, size_t error_size)
     ng_strbuf_init(&json);
     if (ng_strbuf_printf(&json, "{\n  \"applicationCategoryType\": %d,\n"
                            "  \"titleId\": \"%s\",\n"
-                           "  \"deeplinkUri\": \"http://127.0.0.1:%d/?launcher=1\",\n"
+                           "  \"deeplinkUri\": \"http://127.0.0.1:%d/?v=%s\",\n"
                            "  \"localizedParameters\": {\n"
                            "    \"defaultLanguage\": \"zh-Hans\",\n"
                            "    \"en-US\": { \"titleName\": \"Game Center\" },\n"
@@ -189,7 +190,8 @@ ng_launcher_ensure(int port, char *error, size_t error_size)
                            "    \"zh-Hant\": { \"titleName\": \"Game Center\" }\n"
                            "  }\n"
                            "}\n",
-                         NG_LAUNCHER_CATEGORY, NG_LAUNCHER_TITLE_ID, port) != 0) {
+                         NG_LAUNCHER_CATEGORY, NG_LAUNCHER_TITLE_ID, port,
+                         NG_VERSION) != 0) {
         ng_strbuf_free(&json);
         snprintf(error, error_size, "无法构造媒体入口元数据");
         return -1;

@@ -51,12 +51,17 @@ button {
   color: inherit;
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-[tabindex="0"]:focus-visible {
+button:focus,
+input:focus,
+select:focus,
+[tabindex="0"]:focus {
   outline: 3px solid var(--accent-bright);
   outline-offset: 4px;
+}
+
+.gamepad-focus {
+  outline: 3px solid var(--accent-bright) !important;
+  outline-offset: 4px !important;
 }
 
 [hidden] {
@@ -4539,6 +4544,14 @@ kbd {
   backdrop-filter: blur(30px);
 }
 
+.detail-action-panel.is-installed {
+  padding: 16px;
+}
+
+.detail-action-panel.is-installed .detail-actions {
+  margin-top: 0;
+}
+
 .detail-panel-head {
   display: flex;
   align-items: flex-start;
@@ -4587,49 +4600,6 @@ kbd {
   color: #7c899f;
 }
 
-.detail-installed-state {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
-  padding: 11px;
-  border: 1px solid rgba(103, 226, 173, 0.18);
-  border-radius: 12px;
-  background: rgba(43, 125, 92, 0.09);
-}
-
-.detail-installed-check {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
-  background: rgba(103, 226, 173, 0.14);
-  color: var(--success);
-  font-size: 13px;
-  font-weight: 850;
-}
-
-.detail-installed-state > span:last-child {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.detail-installed-state strong {
-  color: #d9f6e9;
-  font-size: 10px;
-}
-
-.detail-installed-state small {
-  overflow: hidden;
-  color: #82bb9f;
-  font-size: 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .detail-storage {
   margin-top: 12px;
 }
@@ -4654,6 +4624,29 @@ kbd {
   background: linear-gradient(145deg, #bdf7df, #67e2ad);
   color: #071b14;
   box-shadow: 0 12px 30px rgba(46, 174, 125, 0.24);
+}
+
+.detail-actions .launch-button:focus {
+  outline-color: #d9fff1;
+  box-shadow:
+    0 0 0 4px rgba(103, 226, 173, 0.2),
+    0 15px 34px rgba(46, 174, 125, 0.3);
+}
+
+.detail-actions .launch-button.gamepad-focus {
+  outline-color: #d9fff1 !important;
+  box-shadow:
+    0 0 0 4px rgba(103, 226, 173, 0.2),
+    0 15px 34px rgba(46, 174, 125, 0.3);
+}
+
+.detail-actions .launch-button.is-armed {
+  outline: 3px solid #d9fff1;
+  outline-offset: 4px;
+  box-shadow:
+    0 0 0 4px rgba(103, 226, 173, 0.2),
+    inset 0 0 0 2px rgba(7, 27, 20, 0.24),
+    0 15px 34px rgba(46, 174, 125, 0.3);
 }
 
 .detail-actions .launch-button .launch-icon {
@@ -5686,24 +5679,6 @@ kbd {
 .detail-install-status {
   padding: 6px 9px;
   font-size: 11.5px;
-}
-
-.detail-installed-state {
-  padding: 13px;
-}
-
-.detail-installed-check {
-  width: 31px;
-  height: 31px;
-  font-size: 15px;
-}
-
-.detail-installed-state strong {
-  font-size: 14px;
-}
-
-.detail-installed-state small {
-  font-size: 12px;
 }
 
 .detail-storage {

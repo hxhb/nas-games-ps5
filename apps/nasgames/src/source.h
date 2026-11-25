@@ -45,6 +45,7 @@ typedef struct {
     void *(*file_open)(NgSource *source, const char *path, uint64_t *size);
     ssize_t (*file_read)(NgSource *source, void *handle, void *buf, size_t size);
     int (*file_seek)(NgSource *source, void *handle, uint64_t offset);
+    void (*file_set_read_limit)(NgSource *source, void *handle, uint64_t limit);
     void (*file_close)(NgSource *source, void *handle);
 } NgSourceOps;
 
@@ -83,6 +84,7 @@ int ng_source_measure_tree(NgSource *source, const char *path,
 void ng_source_set_error(NgSource *source, const char *format, ...);
 void ng_source_error_snapshot(NgSource *source, const char *fallback,
                               char *out, size_t out_size);
+void ng_source_reset_connection(NgSource *source);
 int ng_source_list_shares(const NgSourceConfig *config, NgShareList *shares,
                           char *error, size_t error_size);
 int ng_source_read_all(NgSource *source, const char *path, size_t max_bytes,
@@ -90,6 +92,7 @@ int ng_source_read_all(NgSource *source, const char *path, size_t max_bytes,
 NgSourceFile *ng_source_open_file(NgSource *source, const char *path);
 ssize_t ng_source_file_read(NgSourceFile *file, void *buf, size_t size);
 int ng_source_file_seek(NgSourceFile *file, uint64_t offset);
+void ng_source_file_set_read_limit(NgSourceFile *file, uint64_t limit);
 void ng_source_file_close(NgSourceFile *file);
 
 #endif

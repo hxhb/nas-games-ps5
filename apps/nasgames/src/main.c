@@ -140,13 +140,12 @@ notify(const char *message)
 }
 
 static void
-open_browser(const NgConfig *config)
+open_browser(int port)
 {
 #ifdef __PROSPERO__
     char uri[128];
 
-    if (!config->open_browser_on_start) return;
-    snprintf(uri, sizeof(uri), "http://127.0.0.1:%d", config->port);
+    snprintf(uri, sizeof(uri), "http://127.0.0.1:%d", port);
     sleep(1);
     if (ensure_user_service() != 0) {
         ng_log_error("无法初始化用户服务，跳过自动打开浏览器");
@@ -158,16 +157,17 @@ open_browser(const NgConfig *config)
         ng_log_info("已在浏览器中打开 %s", uri);
     }
 #else
-    (void)config;
+    (void)port;
 #endif
 }
 
 int
 main(int argc, char **argv)
 {
-    NgConfig config;
     const char *data_dir = "/data/nasgames";
     struct sigaction action;
+    int port;
+    int open_on_start;
     int rc;
 
 #ifndef __PROSPERO__
@@ -215,12 +215,13 @@ main(int argc, char **argv)
     ng_installer_remount_imported();
     ng_installer_repair_homebrew_permissions();
     startup_log("imported folders restored");
-    ng_app_config_snapshot(&config);
+    port = ng_app_server_port();
+    open_on_start = ng_app_open_browser_on_start();
     startup_log("starting HTTP server");
-    rc = ng_http_start(config.port);
+    rc = ng_http_start(port);
     if (rc != 0) {
         startup_log("HTTP server start failed");
-        ng_log_error("无法启动 HTTP 服务，端口 %d：%s", config.port, strerror(errno));
+        ng_log_error("无法启动 HTTP 服务，端口 %d：%s", port, strerror(errno));
         notify("Game Center: HTTP 端口启动失败");
         ng_app_stop();
         ng_log_close();
@@ -233,7 +234,7 @@ main(int argc, char **argv)
     }
     {
         char launcher_error[NG_ERROR_LEN];
-        if (ng_launcher_ensure(config.port, launcher_error,
+        if (ng_launcher_ensure(port, launcher_error,
                                sizeof(launcher_error)) != 0) {
             ng_log_error("媒体入口安装失败: %s", launcher_error);
             notify("Game Center 媒体入口安装失败，主服务仍可使用");
@@ -248,12 +249,12 @@ main(int argc, char **argv)
         char message[128];
         snprintf(message, sizeof(message),
                  "Game Center 已启动，可在浏览器打开 http://127.0.0.1:%d",
-                 config.port);
+                 port);
         notify(message);
     }
-    if (config.open_browser_on_start) {
+    if (open_on_start) {
         startup_log("opening browser");
-        open_browser(&config);
+        open_browser(port);
     }
     startup_log("main loop entered");
 
